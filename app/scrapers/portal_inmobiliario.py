@@ -23,13 +23,12 @@ class PortalInmobiliarioScraper(BaseScraper):
 
     def _build_search_url(self, commune_slug: str, bedrooms: int, page_num: int = 1) -> str:
         """Construye la URL de búsqueda filtrada."""
-        # Portal Inmobiliario usa formato MercadoLibre
-        # /venta/departamento/{dormitorios}-dormitorio/{comuna}-metropolitana
-        dorms = f"{bedrooms}-dormitorio" if bedrooms == 1 else f"{bedrooms}-dormitorios"
         offset = "" if page_num <= 1 else f"_Desde_{(page_num - 1) * 48 + 1}"
         return (
-            f"{BASE_URL}/venta/departamento/{dorms}/"
-            f"{commune_slug}-metropolitana{offset}"
+            f"{BASE_URL}/venta/departamento/"
+            f"{commune_slug}-metropolitana"
+            f"_BEDROOMS_{bedrooms}-{bedrooms}"
+            f"{offset}"
         )
 
     async def scrape(self) -> list[ScrapedProperty]:
@@ -92,16 +91,35 @@ class PortalInmobiliarioScraper(BaseScraper):
         """Parsea una página de resultados de Portal Inmobiliario."""
         properties: list[ScrapedProperty] = []
 
-        try:
-            # Esperar a que carguen los resultados
-            await page.wait_for_selector(
-                "li.ui-search-layout__item", timeout=15000
-            )
-        except Exception:
-            logger.warning("No se encontraron resultados en la página")
-            return properties
+        # Múltiples selectores posibles (MercadoLibre cambia frecuentemente)
+        selectors = [
+            "li.ui-search-layout__item",
+            "div.ui-search-result",
+            "li[class*='ui-search']",
+            "div.poly-card",
+            "ol.ui-search-layout li",
+        ]
 
-        items = await page.query_selector_all("li.ui-search-layout__item")
+        items = []
+        for selector in selectors:
+            try:
+                await page.wait_for_selector(selector, timeout=10000)
+                items = await page.query_selector_all(selector)
+                if items:
+                    logger.debug(f"Encontrados {len(items)} items con selector: {selector}")
+                    break
+            except Exception:
+                continue
+
+        if not items:
+            # Fallback: buscar todos los links de anuncio
+            items = await page.query_selector_all("a[href*='/MLC-']")
+            if items:
+                logger.debug(f"Fallback: {len(items)} links de anuncio encontrados")
+                return await self._parse_link_items(items, commune_name)
+
+            logger.warning("No se encontraron resultados con ningún selector")
+            return properties
 
         for item in items:
             try:
@@ -114,32 +132,100 @@ class PortalInmobiliarioScraper(BaseScraper):
 
         return properties
 
+    async def _parse_link_items(
+        self, links: list, commune_name: str
+    ) -> list[ScrapedProperty]:
+        """Parsea items cuando solo tenemos los links de anuncio."""
+        properties: list[ScrapedProperty] = []
+        seen_ids: set[str] = set()
+
+        for link in links:
+            try:
+                href = await link.get_attribute("href") or ""
+                if "/MLC-" not in href:
+                    continue
+
+                source_id = self._extract_id_from_url(href)
+                if source_id in seen_ids:
+                    continue
+                seen_ids.add(source_id)
+
+                # Intentar obtener texto del contenedor padre
+                parent = await link.evaluate_handle("el => el.closest('li') || el.closest('div') || el.parentElement")
+                text = await parent.evaluate("el => el ? el.innerText : ''") if parent else ""
+
+                title = text.split("\n")[0][:200] if text else source_id
+
+                # Extraer precio del texto
+                price_uf, price_clp = self._extract_price_from_text(text)
+
+                # Extraer m² del texto
+                m2_total = self._extract_m2_from_text(text)
+
+                if title and source_id:
+                    properties.append(ScrapedProperty(
+                        source="portal_inmobiliario",
+                        source_id=source_id,
+                        source_url=href.split("?")[0],
+                        title=title.strip(),
+                        price_uf=price_uf,
+                        price_clp=price_clp,
+                        m2_total=m2_total,
+                        commune=commune_name,
+                    ))
+            except Exception as e:
+                logger.debug(f"Error parseando link: {e}")
+                continue
+
+        return properties
+
     async def _parse_listing_item(
         self, item, commune_name: str
     ) -> ScrapedProperty | None:
         """Parsea un item individual del listado."""
-        # Título y URL
-        link_el = await item.query_selector("a.ui-search-link")
-        if not link_el:
+        # Título y URL — probar múltiples selectores
+        source_url = ""
+        title = ""
+
+        for link_sel in ["a.ui-search-link", "a.poly-component__title", "a[href*='/MLC-']", "a"]:
+            link_el = await item.query_selector(link_sel)
+            if link_el:
+                source_url = await link_el.get_attribute("href") or ""
+                if "/MLC-" in source_url or "portalinmobiliario" in source_url:
+                    break
+                source_url = ""
+
+        if not source_url:
             return None
 
-        source_url = await link_el.get_attribute("href") or ""
-        title_el = await item.query_selector(
-            "h2.ui-search-item__title, .ui-search-item__group__element"
-        )
-        title = await title_el.inner_text() if title_el else ""
+        # Título
+        for title_sel in ["h2", "h3", ".poly-component__title", ".ui-search-item__title", "a"]:
+            title_el = await item.query_selector(title_sel)
+            if title_el:
+                title = (await title_el.inner_text()).strip()
+                if title:
+                    break
 
-        if not source_url or not title:
+        if not title:
             return None
 
-        # Extraer source_id de la URL
         source_id = self._extract_id_from_url(source_url)
 
         # Precio
         price_uf, price_clp = await self._parse_price(item)
 
+        # Si no se encontró precio en elementos, buscar en texto completo
+        if price_uf is None and price_clp is None:
+            full_text = await item.inner_text()
+            price_uf, price_clp = self._extract_price_from_text(full_text)
+
         # Atributos (m², dormitorios, baños)
         m2_total, bedrooms, bathrooms = await self._parse_attributes(item)
+
+        # Si no se encontraron atributos, buscar en texto completo
+        if m2_total is None:
+            full_text = await item.inner_text()
+            m2_total = self._extract_m2_from_text(full_text)
 
         # Dirección
         address = await self._parse_address(item)
@@ -147,8 +233,8 @@ class PortalInmobiliarioScraper(BaseScraper):
         return ScrapedProperty(
             source="portal_inmobiliario",
             source_id=source_id,
-            source_url=source_url.split("?")[0],  # Limpiar tracking params
-            title=title.strip(),
+            source_url=source_url.split("?")[0],
+            title=title[:300],
             price_uf=price_uf,
             price_clp=price_clp,
             m2_total=m2_total,
@@ -163,29 +249,40 @@ class PortalInmobiliarioScraper(BaseScraper):
         price_uf = None
         price_clp = None
 
-        price_el = await item.query_selector(
-            ".andes-money-amount__fraction, .price-tag-fraction"
-        )
-        currency_el = await item.query_selector(
-            ".andes-money-amount__currency-symbol, .price-tag-symbol"
-        )
+        # Probar múltiples selectores de precio
+        for price_sel in [
+            ".andes-money-amount__fraction",
+            ".price-tag-fraction",
+            ".poly-price__current .poly-component__price",
+            "[class*='price'] [class*='fraction']",
+            "[class*='Price']",
+        ]:
+            price_el = await item.query_selector(price_sel)
+            if price_el:
+                price_text = (await price_el.inner_text()).strip()
+                price_text = price_text.replace(".", "").replace(",", ".").strip()
 
-        if price_el:
-            price_text = await price_el.inner_text()
-            price_text = price_text.replace(".", "").replace(",", ".").strip()
+                # Buscar símbolo de moneda
+                currency = ""
+                for curr_sel in [".andes-money-amount__currency-symbol", ".price-tag-symbol", "[class*='currency']"]:
+                    curr_el = await item.query_selector(curr_sel)
+                    if curr_el:
+                        currency = (await curr_el.inner_text()).strip()
+                        break
 
-            currency = ""
-            if currency_el:
-                currency = (await currency_el.inner_text()).strip()
+                try:
+                    value = float(price_text)
+                    if "UF" in currency.upper():
+                        price_uf = value
+                    elif "$" in currency or value > 100000:
+                        price_clp = int(value)
+                    elif value < 10000:
+                        price_uf = value
+                except ValueError:
+                    pass
 
-            try:
-                value = float(price_text)
-                if "UF" in currency.upper():
-                    price_uf = value
-                elif "$" in currency:
-                    price_clp = int(value)
-            except ValueError:
-                pass
+                if price_uf is not None or price_clp is not None:
+                    break
 
         return price_uf, price_clp
 
@@ -197,41 +294,87 @@ class PortalInmobiliarioScraper(BaseScraper):
         bedrooms = None
         bathrooms = None
 
-        attrs = await item.query_selector_all(
-            ".ui-search-card-attributes__attribute"
-        )
-        for attr in attrs:
-            text = (await attr.inner_text()).strip().lower()
-
-            m2_match = re.search(r"([\d,.]+)\s*m²", text)
-            if m2_match:
-                m2_total = float(m2_match.group(1).replace(",", "."))
-
-            dorm_match = re.search(r"(\d+)\s*dorm", text)
-            if dorm_match:
-                bedrooms = int(dorm_match.group(1))
-
-            bath_match = re.search(r"(\d+)\s*baño", text)
-            if bath_match:
-                bathrooms = int(bath_match.group(1))
+        # Probar múltiples selectores
+        for attr_sel in [
+            ".ui-search-card-attributes__attribute",
+            "[class*='attribute']",
+            "li[class*='attr']",
+            ".poly-attributes-list li",
+        ]:
+            attrs = await item.query_selector_all(attr_sel)
+            if attrs:
+                for attr in attrs:
+                    text = (await attr.inner_text()).strip().lower()
+                    m2_match = re.search(r"([\d,.]+)\s*m[²2]", text)
+                    if m2_match:
+                        m2_total = float(m2_match.group(1).replace(",", "."))
+                    dorm_match = re.search(r"(\d+)\s*dorm", text)
+                    if dorm_match:
+                        bedrooms = int(dorm_match.group(1))
+                    bath_match = re.search(r"(\d+)\s*baño", text)
+                    if bath_match:
+                        bathrooms = int(bath_match.group(1))
+                break
 
         return m2_total, bedrooms, bathrooms
 
     async def _parse_address(self, item) -> str | None:
         """Extrae la dirección/ubicación."""
-        addr_el = await item.query_selector(
-            ".ui-search-item__location, .ui-search-item__group__element--location"
-        )
-        if addr_el:
-            return (await addr_el.inner_text()).strip()
+        for addr_sel in [
+            ".ui-search-item__location",
+            ".ui-search-item__group__element--location",
+            "[class*='location']",
+            "[class*='address']",
+        ]:
+            addr_el = await item.query_selector(addr_sel)
+            if addr_el:
+                return (await addr_el.inner_text()).strip()
         return None
 
     @staticmethod
     def _extract_id_from_url(url: str) -> str:
         """Extrae el ID del anuncio de la URL."""
-        # Formato: MLC-123456789
         match = re.search(r"(MLC-?\d+)", url)
         if match:
             return match.group(1)
-        # Fallback: usar parte final de la URL
         return url.rstrip("/").split("/")[-1].split("?")[0]
+
+    @staticmethod
+    def _extract_price_from_text(text: str) -> tuple[float | None, int | None]:
+        """Extrae precio de texto libre."""
+        if not text:
+            return None, None
+
+        # UF
+        uf_match = re.search(r"([\d.]+(?:,\d+)?)\s*UF", text, re.IGNORECASE)
+        if uf_match:
+            try:
+                val = float(uf_match.group(1).replace(".", "").replace(",", "."))
+                return val, None
+            except ValueError:
+                pass
+
+        # CLP
+        clp_match = re.search(r"\$\s*([\d.]+)", text)
+        if clp_match:
+            try:
+                val = int(clp_match.group(1).replace(".", ""))
+                if val > 500000:
+                    return None, val
+            except ValueError:
+                pass
+
+        return None, None
+
+    @staticmethod
+    def _extract_m2_from_text(text: str) -> float | None:
+        """Extrae m² de texto libre."""
+        if not text:
+            return None
+        m2_match = re.search(r"([\d,.]+)\s*m[²2]", text, re.IGNORECASE)
+        if m2_match:
+            try:
+                return float(m2_match.group(1).replace(",", "."))
+            except ValueError:
+                pass
+        return None

@@ -1,0 +1,484 @@
+================================================================================
+  INMOALERT CHILE — PLAN DE FRONTEND
+================================================================================
+
+1. STACK TECNOLÓGICO
+================================================================================
+
+Componente          | Tecnología              | Justificación
+--------------------|-------------------------|------------------------------------------
+Framework           | Next.js 14+ (App Router)| SSR para landing (SEO) + SPA para dashboard
+Lenguaje            | TypeScript              | Tipado seguro que refleja las respuestas API
+Estilos             | Tailwind CSS + shadcn/ui| Componentes accesibles, control total
+Gráficos            | Recharts                | Ligero, composable, ideal para datos de precio
+Mapas               | Leaflet + react-leaflet | Gratuito, sin API key, Santiago bien cubierto
+Data Fetching       | TanStack Query v5       | Cache, refetch automático, paginación
+Autenticación       | NextAuth.js v5          | Simple credentials para admin
+Iconos              | Lucide React            | Limpio, consistente, default de shadcn/ui
+Package Manager     | pnpm                    | Rápido, eficiente en disco
+
+
+2. PÁGINAS COMPLETAS (10 PÁGINAS)
+================================================================================
+
+2.1 PÁGINAS PÚBLICAS (5) — Sin autenticación
+
+RUTA                    | PÁGINA              | DESCRIPCIÓN
+------------------------|---------------------|--------------------------------------------
+/                       | Landing Page        | Hero con propuesta de valor, contador
+                        |                     | animado de stats, mapa de 4 comunas,
+                        |                     | CTA a Telegram y dashboard
+                        |                     |
+/oportunidades          | Tablero de          | Lista filtrable de oportunidades con
+                        | Oportunidades       | cards: score badge, % bajo mercado,
+                        |                     | ganancia estimada, filtros por comuna,
+                        |                     | dormitorios, rango UF, paginación
+                        |                     |
+/oportunidades/[id]     | Detalle de          | Carrusel de imágenes, gráfico precio
+                        | Oportunidad         | vs mercado, pin en mapa, atributos,
+                        |                     | badges de urgencia, link al portal
+                        |                     |
+/mercado                | Visión del Mercado   | Promedios UF/m² por comuna en bar chart,
+                        |                     | tabla con avg/median/min/max, muestra
+                        |                     |
+/mapa                   | Mapa de Propiedades | Mapa full-screen con marcadores
+                        |                     | agrupados, colores por tipo, filtros
+                        |                     | en sidebar, popup con datos clave
+
+2.2 PÁGINAS PROTEGIDAS (5) — Requieren autenticación admin
+
+RUTA                    | PÁGINA              | DESCRIPCIÓN
+------------------------|---------------------|--------------------------------------------
+/login                  | Login               | Formulario email/password para admin
+                        |                     |
+/admin                  | Dashboard Admin     | 4 KPI cards, estado pipeline, gráficos
+                        |                     | propiedades por fuente/comuna, últimas
+                        |                     | ejecuciones del pipeline
+                        |                     |
+/admin/propiedades      | Gestión Propiedades | Tabla completa con sorting, filtros,
+                        |                     | paginación, exportar CSV
+                        |                     |
+/admin/pipeline         | Control Pipeline    | Botón trigger scraping, indicador de
+                        |                     | estado, log de ejecuciones con duración
+                        |                     | y errores
+                        |                     |
+/admin/feedback         | Análisis Feedback   | Gauge de tasa de falsos positivos,
+                        |                     | conteo bueno/malo, indicador OK/AJUSTAR
+
+
+3. ESTRUCTURA DE ARCHIVOS
+================================================================================
+
+frontend/
+├── src/
+│   ├── app/                              # Next.js App Router
+│   │   ├── (public)/                     # Grupo rutas públicas
+│   │   │   ├── page.tsx                  # Landing /
+│   │   │   ├── oportunidades/
+│   │   │   │   ├── page.tsx              # Lista oportunidades
+│   │   │   │   └── [id]/page.tsx         # Detalle oportunidad
+│   │   │   ├── mercado/page.tsx          # Visión del mercado
+│   │   │   └── mapa/page.tsx             # Mapa interactivo
+│   │   ├── (admin)/                      # Grupo rutas protegidas
+│   │   │   ├── admin/
+│   │   │   │   ├── page.tsx              # Dashboard admin
+│   │   │   │   ├── propiedades/page.tsx  # Tabla propiedades
+│   │   │   │   ├── pipeline/page.tsx     # Control pipeline
+│   │   │   │   └── feedback/page.tsx     # Análisis feedback
+│   │   │   └── layout.tsx               # Layout admin con sidebar
+│   │   ├── login/page.tsx
+│   │   ├── layout.tsx                    # Root layout
+│   │   └── globals.css
+│   │
+│   ├── components/
+│   │   ├── ui/                           # shadcn/ui (Button, Card, Badge, etc.)
+│   │   ├── layout/
+│   │   │   ├── Navbar.tsx                # Navegación pública
+│   │   │   ├── Footer.tsx
+│   │   │   ├── AdminSidebar.tsx          # Sidebar admin
+│   │   │   └── AdminHeader.tsx
+│   │   ├── properties/
+│   │   │   ├── PropertyCard.tsx          # Card para listas
+│   │   │   ├── PropertyTable.tsx         # Tabla admin
+│   │   │   ├── PropertyDetail.tsx        # Detalle completo
+│   │   │   ├── PropertyFilters.tsx       # Sidebar/barra de filtros
+│   │   │   ├── PriceComparison.tsx       # Gráfico precio vs mercado
+│   │   │   └── ImageCarousel.tsx         # Carrusel de imágenes
+│   │   ├── opportunities/
+│   │   │   ├── OpportunityCard.tsx       # Card con score y profit
+│   │   │   ├── OpportunityList.tsx       # Lista filtrada paginada
+│   │   │   ├── ScoreBadge.tsx            # Badge 0-100 con colores
+│   │   │   ├── ProfitIndicator.tsx       # % bajo mercado + ganancia
+│   │   │   └── UrgencyTag.tsx            # Tags "Urgente", "Remate"
+│   │   ├── market/
+│   │   │   ├── MarketTable.tsx           # Tabla UF/m² por zona
+│   │   │   ├── CommuneComparisonChart.tsx# Bar chart comunas
+│   │   │   └── PriceRangeChart.tsx       # Rango min-median-max
+│   │   ├── map/
+│   │   │   ├── PropertyMap.tsx           # Mapa Leaflet principal
+│   │   │   ├── MapMarker.tsx             # Marcadores por color
+│   │   │   ├── MapPopup.tsx              # Popup al clickear
+│   │   │   └── MapFilters.tsx            # Panel de filtros
+│   │   ├── admin/
+│   │   │   ├── KpiCard.tsx              # Card métrica con ícono
+│   │   │   ├── PipelineStatus.tsx        # Indicador estado
+│   │   │   ├── PipelineRunsTable.tsx     # Historial ejecuciones
+│   │   │   ├── TriggerScrapeButton.tsx   # Botón trigger pipeline
+│   │   │   ├── FeedbackGauge.tsx         # Gauge falsos positivos
+│   │   │   ├── PropertiesBySourceChart.tsx
+│   │   │   └── PropertiesByCommuneChart.tsx
+│   │   └── charts/
+│   │       ├── PriceHistoryChart.tsx     # Línea temporal
+│   │       ├── BarChart.tsx              # Bar chart reutilizable
+│   │       └── GaugeChart.tsx            # Gauge circular
+│   │
+│   ├── lib/
+│   │   ├── api.ts                        # Cliente API (fetch wrapper)
+│   │   ├── types.ts                      # Interfaces TypeScript
+│   │   ├── constants.ts                  # Comunas, rangos, config
+│   │   ├── utils.ts                      # Formatters (UF, fechas, %)
+│   │   └── hooks/
+│   │       ├── useProperties.ts          # React Query: propiedades
+│   │       ├── useOpportunities.ts       # React Query: oportunidades
+│   │       ├── useMarket.ts             # React Query: mercado
+│   │       └── useAdmin.ts              # React Query: admin
+│   │
+│   └── middleware.ts                     # Auth para rutas /admin
+│
+├── public/
+│   ├── images/
+│   └── favicon.ico
+├── package.json
+├── tsconfig.json
+├── tailwind.config.ts
+├── next.config.ts
+└── .env.local
+
+
+4. INTERFACES TYPESCRIPT (CONTRATOS API)
+================================================================================
+
+// Propiedad en lista
+interface PropertyListItem {
+  id: string
+  source: string                   // "portal_inmobiliario" | "yapo"
+  source_url: string
+  title: string
+  price_uf: number | null
+  price_m2_uf: number | null
+  m2_total: number | null
+  bedrooms: number | null
+  bathrooms: number | null
+  commune: string
+  address: string | null
+  is_opportunity: boolean
+  opportunity_score: number | null
+  first_seen_at: string | null
+}
+
+// Propiedad detalle (extiende lista)
+interface PropertyDetail extends PropertyListItem {
+  description: string | null
+  price_clp: number | null
+  m2_util: number | null
+  latitude: number | null
+  longitude: number | null
+  floor: number | null
+  has_parking: boolean | null
+  has_bodega: boolean | null
+  has_urgency_keyword: boolean
+  is_active: boolean
+  last_seen_at: string | null
+  images: string[] | null
+  source_id: string
+}
+
+// Oportunidad
+interface OpportunityItem {
+  id: string
+  source: string
+  source_url: string
+  title: string
+  price_uf: number | null
+  price_m2_uf: number | null
+  m2_total: number | null
+  bedrooms: number | null
+  commune: string
+  opportunity_score: number | null
+  has_urgency_keyword: boolean
+  pct_below_market: number | null
+  avg_zone_price_m2: number | null
+  estimated_market_value_uf: number | null
+  potential_profit_uf: number | null
+  first_seen_at: string | null
+}
+
+// Promedio de mercado
+interface MarketAverageItem {
+  commune: string
+  bedrooms: number
+  avg_price_m2_uf: number
+  median_price_m2_uf: number | null
+  min_price_m2_uf: number | null
+  max_price_m2_uf: number | null
+  sample_count: number
+  last_updated: string | null
+}
+
+// Respuesta paginada
+interface PaginatedResponse<T> {
+  total: number
+  page: number
+  limit: number
+  data: T[]
+}
+
+// Métricas del sistema
+interface SystemMetrics {
+  timestamp: string
+  properties: {
+    total_active: number
+    new_today: number
+    by_source: Record<string, number>
+    by_commune: Record<string, number>
+  }
+  opportunities: {
+    active: number
+    detected_today: number
+  }
+  users: { total: number; active: number }
+  alerts: { sent_today: number; sent_this_week: number }
+  pipeline: { last_runs: PipelineRun[] }
+}
+
+// Ejecución del pipeline
+interface PipelineRun {
+  timestamp: string
+  status: string
+  properties_found: number
+  opportunities_found: number
+  alerts_sent: number
+  errors: string[]
+  duration_seconds: number
+}
+
+// Feedback stats
+interface FeedbackStats {
+  total_feedback: number
+  good: number
+  bad: number
+  false_positive_rate: number | null
+  target: string
+  status: string           // "OK" | "NEEDS_ADJUSTMENT"
+}
+
+
+5. ESTRATEGIA DE VISUALIZACIÓN DE DATOS
+================================================================================
+
+5.1 GRÁFICOS (Recharts)
+
+Gráfico                     | Página          | Fuente API              | Tipo
+----------------------------|-----------------|-------------------------|----------------
+Comparación comunas         | /mercado        | GET /opportunities/market| Bar agrupado
+Rango precios por comuna    | /mercado        | GET /opportunities/market| Range chart
+Precio vs mercado           | /oportunidades/[id]| Detalle + market     | Bar comparativo
+Propiedades por fuente      | /admin          | GET /admin/metrics      | Donut
+Propiedades por comuna      | /admin          | GET /admin/metrics      | Bar horizontal
+Historial pipeline          | /admin/pipeline | GET /admin/logs         | Timeline/bar
+Gauge falsos positivos      | /admin/feedback | GET /admin/feedback/stats| Gauge circular
+
+5.2 MAPA (Leaflet)
+
+Centro:          Santiago, Chile (-33.4489, -70.6693)
+Zoom default:    12 (cubre las 4 comunas)
+Agrupación:      react-leaflet-cluster para marcadores
+Colores:         Verde = oportunidad (score >= 70)
+                 Azul = propiedad regular
+                 Rojo = urgencia alta (keywords)
+Tamaño:          Proporcional al opportunity_score
+Popup:           Título, precio UF, UF/m², dormitorios, score, link
+Tiles:           CartoDB (limpio, gratuito)
+GeoJSON:         Polígonos de las 4 comunas (IDE Chile / OSM)
+
+
+6. DISEÑO RESPONSIVO
+================================================================================
+
+Breakpoint      | Target       | Cambios
+----------------|--------------|--------------------------------------------
+< 640px (sm)    | Celulares    | 1 columna, cards apiladas, mapa full-screen
+                |              | con bottom sheet para filtros, menú hamburguesa
+640-1024px (md) | Tablets      | 2 columnas para cards, sidebar colapsa a
+                |              | barra superior en admin
+>= 1024px (lg)  | Desktop      | Layout completo, sidebar admin visible,
+                |              | 3 columnas para cards, mapa con side panel
+
+Decisiones clave:
+- Cards con CSS Grid: auto-fill + minmax(320px, 1fr)
+- Admin sidebar: drawer colapsable en mobile (shadcn Sheet)
+- Mapa: filtros en bottom sheet overlay en mobile
+- Gráficos: ResponsiveContainer de Recharts (auto-resize)
+- Tablas: cambian a layout card en mobile
+
+
+7. CONEXIÓN CON EL BACKEND
+================================================================================
+
+7.1 CLIENTE API (lib/api.ts)
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
+async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+  })
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res.json()
+}
+
+7.2 CORS (agregar al backend)
+
+Agregar a app/main.py:
+
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+7.3 PATRONES DE DATA FETCHING
+
+Contexto                | Estrategia
+------------------------|------------------------------------------------
+Landing page stats      | Server Component + revalidate: 300 (5 min ISR)
+Lista oportunidades     | Client + TanStack Query, refetch cada 60s
+Detalle propiedad       | Server Component (SEO) + metadata
+Mapa                    | Client-only (dynamic import, ssr: false)
+Dashboard admin         | Client + TanStack Query, refetch cada 30s
+Trigger pipeline        | useMutation de TanStack Query
+
+7.4 VARIABLES DE ENTORNO
+
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXTAUTH_SECRET=<random-string>
+NEXTAUTH_URL=http://localhost:3000
+ADMIN_PASSWORD=<admin-password>
+
+7.5 DOCKER (agregar a docker-compose.yml)
+
+frontend:
+  build: ./frontend
+  container_name: inmoalert_frontend
+  ports:
+    - "3000:3000"
+  environment:
+    - NEXT_PUBLIC_API_URL=http://app:8000
+    - NEXTAUTH_SECRET=change-me
+    - NEXTAUTH_URL=http://localhost:3000
+  depends_on:
+    - app
+
+
+8. FASES DE IMPLEMENTACIÓN
+================================================================================
+
+FASE 1: FUNDACIÓN (3-4 días)
+------------------------------
+Entregable: Proyecto scaffold con conexión API funcionando.
+
+- [ ] Inicializar Next.js + TypeScript + Tailwind + pnpm
+- [ ] Instalar y configurar shadcn/ui (tema neutral)
+- [ ] Crear lib/types.ts con todas las interfaces TypeScript
+- [ ] Crear lib/api.ts con fetch wrapper
+- [ ] Crear lib/constants.ts (comunas, rangos desde config.py)
+- [ ] Crear lib/utils.ts (formatUF, formatDate, formatPctBelow)
+- [ ] Construir root layout con Navbar y Footer (UI en español)
+- [ ] Agregar middleware CORS al backend FastAPI
+- [ ] Configurar TanStack Query provider
+
+Criterio: La app carga y hace fetch exitoso a /api/v1/admin/health.
+
+
+FASE 2: PÁGINAS PÚBLICAS (4-5 días)
+-------------------------------------
+Entregable: Todas las páginas de inversionistas funcionando.
+
+- [ ] Landing page: hero, stats animados, mapa comunas, CTA
+- [ ] Lista de oportunidades con filtros y paginación
+- [ ] Detalle de oportunidad con gráfico precio vs mercado
+- [ ] Visión del mercado con bar charts y tabla
+- [ ] Mapa interactivo con marcadores coloreados y clustering
+- [ ] ScoreBadge, ProfitIndicator, UrgencyTag components
+- [ ] Responsive testing en mobile
+
+Criterio: Un inversionista puede navegar oportunidades,
+ver el mapa, y entender el mercado sin necesitar Telegram.
+
+
+FASE 3: PANEL ADMIN (3-4 días)
+--------------------------------
+Entregable: Panel de administración operativo y seguro.
+
+- [ ] NextAuth.js con credentials provider
+- [ ] Middleware protegiendo /admin/*
+- [ ] Dashboard con 4 KPI cards + gráficos
+- [ ] Control pipeline: trigger, estado, log ejecuciones
+- [ ] Gestión propiedades: tabla con filtros y paginación
+- [ ] Feedback: gauge FP, stats, indicador OK/AJUSTAR
+- [ ] AdminSidebar con navegación
+
+Criterio: El admin puede monitorear el sistema,
+disparar scraping, y ver la tasa de falsos positivos.
+
+
+FASE 4: PULIDO Y DEPLOY (2-3 días)
+-------------------------------------
+Entregable: Frontend producción-ready.
+
+- [ ] Testing responsive completo (mobile/tablet/desktop)
+- [ ] Loading skeletons para todas las secciones con datos
+- [ ] Error boundaries y estados vacíos
+- [ ] SEO metadata para páginas públicas (Open Graph)
+- [ ] Dark mode toggle (Tailwind + shadcn)
+- [ ] Dockerfile para frontend
+- [ ] Agregar servicio a docker-compose.yml
+- [ ] Deploy a Vercel o servidor Docker
+
+Criterio: El frontend funciona en producción,
+se ve bien en todos los dispositivos, y tiene dark mode.
+
+
+TIMELINE TOTAL ESTIMADO: 12-16 días (1 desarrollador)
+
+
+9. DECISIONES ARQUITECTÓNICAS
+================================================================================
+
+1. SIN estado global (Redux/Zustand)
+   TanStack Query maneja todo el server state. El único client
+   state son filtros, que viven en URL search params (URLs compartibles).
+
+2. Filtros en URL params
+   /oportunidades?commune=Ñuñoa&bedrooms=2&min_uf=1500
+   Permite bookmarks y links compartibles.
+
+3. Server Components para SEO, Client para interactividad
+   Landing y detalle renderizan en servidor (indexación).
+   Dashboard, mapa, gráficos son client components.
+
+4. Leaflet sobre Google Maps
+   Sin API key, sin billing, sin límites. Santiago tiene excelente
+   cobertura en OpenStreetMap. Tiles de CartoDB para estilo limpio.
+
+5. UI 100% en español, sin librería i18n
+   Mercado exclusivamente chileno. Strings hardcoded en español.
+   Si se necesita internacionalización luego, se extraen strings.
+
+6. Auth simple sobre OAuth
+   El admin necesita protección pero no cuentas de usuario.
+   Una sola contraseña via NextAuth credentials es lo más simple
+   y seguro. Los usuarios de Telegram no necesitan auth web.

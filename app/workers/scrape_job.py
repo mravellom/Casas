@@ -155,15 +155,16 @@ async def run_scraping() -> int:
         logger.error(f"Error en scraping Portal Inmobiliario: {e}")
         await notify_scraping_error("Portal Inmobiliario", str(e))
 
-    # Scrape Yapo
+    # Scrape Mercado Libre Inmuebles (reemplaza a Yapo.cl que fue cerrado)
     try:
-        yapo_scraper = YapoScraper()
-        yapo_props = await yapo_scraper.scrape()
-        all_properties.extend(yapo_props)
-        logger.info(f"Yapo: {len(yapo_props)} propiedades")
+        from app.scrapers.yapo import MercadoLibreInmueblesScraper
+        ml_scraper = MercadoLibreInmueblesScraper()
+        ml_props = await ml_scraper.scrape()
+        all_properties.extend(ml_props)
+        logger.info(f"ML Inmuebles: {len(ml_props)} propiedades")
     except Exception as e:
-        logger.error(f"Error en scraping Yapo: {e}")
-        await notify_scraping_error("Yapo", str(e))
+        logger.error(f"Error en scraping ML Inmuebles: {e}")
+        await notify_scraping_error("ML Inmuebles", str(e))
 
     if not all_properties:
         logger.warning("No se encontraron propiedades en ningún portal")

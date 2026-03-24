@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
 from app.api.opportunities import router as opportunities_router
@@ -31,12 +32,16 @@ async def lifespan(app: FastAPI):
     start_scheduler()
 
     # Iniciar bot de Telegram en background
-    _telegram_app = build_telegram_app()
-    if _telegram_app:
-        await _telegram_app.initialize()
-        await _telegram_app.start()
-        await _telegram_app.updater.start_polling(drop_pending_updates=True)
-        logger.info("Bot de Telegram iniciado")
+    try:
+        _telegram_app = build_telegram_app()
+        if _telegram_app:
+            await _telegram_app.initialize()
+            await _telegram_app.start()
+            await _telegram_app.updater.start_polling(drop_pending_updates=True)
+            logger.info("Bot de Telegram iniciado")
+    except Exception as e:
+        logger.warning(f"Bot de Telegram no iniciado: {e}")
+        _telegram_app = None
 
     yield
 
@@ -55,6 +60,13 @@ app = FastAPI(
     description="Plataforma de inteligencia de oportunidades inmobiliarias - Santiago, Chile",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(health_router)

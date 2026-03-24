@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: inmoalert_pass
       POSTGRES_DB: inmoalert
     ports:
-      - "5432:5432"
+      - "5435:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +20,7 @@ services:
     image: redis:7-alpine
     container_name: inmoalert_redis
     ports:
-      - "6379:6379"
+      - "6382:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

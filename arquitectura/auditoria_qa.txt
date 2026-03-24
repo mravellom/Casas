@@ -1,0 +1,409 @@
+================================================================================
+  INMOALERT CHILE — AUDITORÍA QA SENIOR
+  Fecha: 2026-03-24
+  Auditor: QA Senior Automatizado
+  Total Issues: 41
+================================================================================
+
+RESUMEN EJECUTIVO
+================================================================================
+
+Severidad       | Cantidad | Categorías principales
+----------------|----------|------------------------------------------
+CRÍTICO         | 4        | Race conditions, status codes, timeout API
+ALTO            | 8        | Auth, credenciales, CORS, queries N+1
+MEDIO           | 18       | Validación, logging, performance, selectores
+BAJO            | 11       | UX frontend, docs, test coverage
+TOTAL           | 41       |
+
+Estado general: La aplicación tiene buena arquitectura pero requiere
+correcciones CRÍTICAS antes de ir a producción, especialmente en
+autenticación, race conditions y manejo de errores.
+
+
+================================================================================
+ISSUES CRÍTICOS (4)
+================================================================================
+
+#1 — Race Condition en Upsert de Propiedades
+   Archivo:   app/workers/scrape_job.py (líneas 228-243)
+   Severidad: CRÍTICO
+
+   Problema: El patrón check-then-insert tiene race condition entre
+   el SELECT y el INSERT. Dos jobs concurrentes podrían crear
+   duplicados a pesar del unique constraint.
+
+   Código afectado:
+     existing = result.scalar_one_or_none()
+     if existing:
+         # update...
+     else:
+         # insert...  ← Race condition aquí
+
+   Impacto: Duplicados en BD; violación de integridad de datos.
+
+   Fix: Usar INSERT ... ON CONFLICT DO UPDATE de PostgreSQL
+   o locking explícito con SELECT ... FOR UPDATE.
+
+
+#2 — Status Code Incorrecto en API de Propiedades
+   Archivo:   app/api/properties.py (línea 83)
+   Severidad: CRÍTICO
+
+   Problema: Cuando no se encuentra una propiedad, retorna un dict
+   con error pero SIN status code HTTP correcto:
+
+     if not prop:
+         return {"error": "Propiedad no encontrada"}, 404
+
+   FastAPI ignora la tupla — siempre devuelve 200.
+
+   Impacto: Frontend no puede detectar errores; HTTP status ignorado.
+
+   Fix: Usar raise HTTPException(status_code=404, detail="...")
+
+
+#3 — Timeout en API de UF sin Circuit Breaker
+   Archivo:   app/analysis/uf_converter.py (líneas 26-48)
+   Severidad: CRÍTICO
+
+   Problema: La llamada a mindicador.cl tiene timeout de 10s pero
+   si la API falla repetidamente, no hay circuit breaker. El pipeline
+   entero puede quedar colgado.
+
+   Impacto: Pipeline se detiene; no se envían alertas.
+
+   Fix: Implementar circuit breaker (tenacity con max_retries)
+   y cachear valor UF en BD como fallback.
+
+
+#4 — Validación Faltante en Parámetro commune
+   Archivo:   app/api/opportunities.py (líneas 31-37)
+   Severidad: CRÍTICO
+
+   Problema: El parámetro commune se usa directamente en la query
+   sin validar que sea una comuna válida del sistema. SQLAlchemy
+   protege contra SQL injection, pero permite filtrar por comunas
+   inexistentes sin feedback.
+
+   Impacto: Posible información no deseada; sin feedback al usuario.
+
+   Fix: Validar commune contra settings.target_communes.
+
+
+================================================================================
+ISSUES ALTOS (8)
+================================================================================
+
+#5 — Credenciales Hardcodeadas en Config
+   Archivo:   app/config.py (líneas 6, 9)
+   Severidad: ALTO
+
+   Problema: Credenciales por defecto en el código:
+     database_url: str = "postgresql+asyncpg://inmoalert:inmoalert_pass@..."
+     redis_url: str = "redis://redis:6379/0"
+
+   Impacto: Credenciales expuestas en control de versiones.
+   Fix: Remover defaults; requerir env vars obligatorias.
+
+
+#6 — CORS Hardcodeado para Localhost
+   Archivo:   app/main.py (líneas 65-70)
+   Severidad: ALTO
+
+   Problema: CORS permite all methods y headers solo desde localhost:3000.
+   En producción esto no funcionará.
+
+     allow_origins=["http://localhost:3000"],
+     allow_methods=["*"],
+     allow_headers=["*"],
+
+   Fix: Cargar origins desde variable de entorno; restringir methods.
+
+
+#7 — Sin Autenticación en Endpoints Admin
+   Archivo:   app/api/health.py
+   Severidad: ALTO
+
+   Problema: TODOS los endpoints admin están sin autenticación:
+   - POST /admin/scrape/trigger (cualquiera puede disparar scraping)
+   - GET /admin/metrics (datos internos expuestos)
+   - GET /admin/feedback/stats (datos de negocio expuestos)
+
+   Impacto: DoS, ejecución no autorizada, exposición de datos.
+   Fix: Agregar autenticación (JWT, API key) con roles.
+
+
+#8 — Fallo Silencioso del Bot Telegram
+   Archivo:   app/main.py (líneas 42-44)
+   Severidad: ALTO
+
+   Problema: Si el bot falla al iniciar, solo logea warning y continúa.
+   Las alertas nunca se enviarán pero la app parece healthy.
+
+   Impacto: Pérdida silenciosa de alertas.
+   Fix: Verificar estado del bot antes de enviar; alertar en health check.
+
+
+#9 — Error Genérico en Health Check de BD
+   Archivo:   app/api/health.py (líneas 29-37)
+   Severidad: ALTO
+
+   Problema: except Exception swallow ALL errors:
+     except Exception:
+         db_status = "error"  # ¿Qué error? Imposible debuggear.
+
+   Fix: Loggear la excepción; diferenciar errores esperados vs bugs.
+
+
+#10 — Queries N+1 en API de Oportunidades
+    Archivo:   app/api/opportunities.py (líneas 49-90)
+    Severidad: ALTO
+
+    Problema: Carga TODOS los market averages en memoria para cada
+    request, luego busca en dict por cada propiedad.
+
+    Impacto: Memory bloat con datasets grandes.
+    Fix: Usar JOIN en la query SQL.
+
+
+#11 — Sin Límite de Páginas en Paginación
+    Archivo:   app/api/properties.py (líneas 14-21)
+    Severidad: ALTO
+
+    Problema: Se puede pedir page=999999 con limit=100. No hay
+    cursor-based pagination.
+
+    Impacto: DoS por offset gigantes; slow DB scans.
+    Fix: Implementar cursor-based pagination o limitar offset.
+
+
+#12 — Deduplicación No Transaccional
+    Archivo:   app/analysis/filters.py (líneas 176-199)
+    Severidad: ALTO
+
+    Problema: Carga todas las propiedades, compara en Python,
+    luego actualiza. Otro proceso puede modificar datos entre medio.
+
+    Fix: Usar deduplicación a nivel de BD o locking.
+
+
+================================================================================
+ISSUES MEDIOS (18)
+================================================================================
+
+#13 — Validación UUID Faltante en Feedback
+    Archivo:   app/notifications/telegram.py (línea 716)
+    Severidad: MEDIO
+    Problema: property_id del callback no se valida como UUID válido.
+    Fix: Validar formato UUID antes de query.
+
+#14 — Max Requests Hardcodeado en Scrapers
+    Archivo:   app/scrapers/base.py (líneas 59-60)
+    Severidad: MEDIO
+    Problema: max_requests_per_session = 100 no configurable.
+    Fix: Hacer configurable por scraper vía Settings.
+
+#15 — Memory Leak en UF Cache
+    Archivo:   app/analysis/uf_converter.py (líneas 11, 22)
+    Severidad: MEDIO
+    Problema: _uf_cache crece sin límite. Si corre meses, cachea
+    cada fecha consultada.
+    Fix: Agregar TTL o max size (ej: últimos 30 días).
+
+#16 — Sin Logging de Propiedades Filtradas
+    Archivo:   app/workers/scrape_job.py (líneas 193-207)
+    Severidad: MEDIO
+    Problema: Propiedades descartadas (precio, comuna) se descartan
+    silenciosamente sin conteo ni log.
+    Fix: Loggear resumen de descartadas por razón.
+
+#17 — Scoring Retorna Early sin Detalle
+    Archivo:   app/analysis/scoring.py (líneas 270-298)
+    Severidad: MEDIO
+    Problema: Si no hay market averages, retorna 0 sin indicar
+    qué comunas faltan.
+    Fix: Loggear comunas sin promedios.
+
+#18 — Comparación Boolean con == en vez de is
+    Archivo:   Múltiples archivos
+    Severidad: MEDIO
+    Problema: Property.is_opportunity == True en queries. Con campos
+    nullable puede causar bugs sutiles.
+    Fix: Usar is True / is False para booleans nullable.
+
+#19 — Sin Error Boundaries en Frontend
+    Archivo:   frontend/src/app/(public)/oportunidades/page.tsx
+    Severidad: MEDIO
+    Problema: Error state sin botón de retry ni detalle del error.
+    Fix: Agregar retry button y mostrar error.message.
+
+#20 — Race Condition en Feedback
+    Archivo:   app/notifications/telegram.py (líneas 724-742)
+    Severidad: MEDIO
+    Problema: Check-then-upsert sin transacción para feedback.
+    Fix: Usar INSERT ... ON CONFLICT o unique constraint.
+
+#21 — Inconsistencia de Timezone
+    Archivo:   Múltiples archivos
+    Severidad: MEDIO
+    Problema: La mayoría usa datetime.now(timezone.utc) pero no hay
+    garantía de consistencia en todos los paths.
+    Fix: Centralizar creación de timestamps.
+
+#22 — Market Average Update sin Locking
+    Archivo:   app/analysis/pricing.py (líneas 16-41)
+    Severidad: MEDIO
+    Problema: Dos jobs simultáneos pueden recalcular y sobrescribir
+    promedios concurrentemente.
+    Fix: Row-level locking o single pipeline instance.
+
+#23 — Variables de Entorno sin Validación en Startup
+    Archivo:   app/config.py
+    Severidad: MEDIO
+    Problema: Los defaults permiten que la app arranque sin
+    TELEGRAM_BOT_TOKEN real configurado. Falla silenciosamente.
+    Fix: Validar env vars críticas al iniciar.
+
+#24 — Selectores CSS Frágiles
+    Archivo:   app/scrapers/portal_inmobiliario.py (líneas 94-101)
+    Severidad: MEDIO
+    Problema: Múltiples selectores fallback pero sin monitoreo
+    de tasa de éxito. Si todos fallan, es silencioso.
+    Fix: Loggear qué selector funcionó; alertar si ninguno funciona.
+
+#25 — Sin Retry Diferenciado en Page Load
+    Archivo:   app/scrapers/portal_inmobiliario.py (líneas 108-122)
+    Severidad: MEDIO
+    Problema: No distingue entre "página cargó pero selector no existe"
+    vs "página nunca cargó".
+    Fix: Separar lógica de carga vs parseo.
+
+#26 — Sin Paginación en Función de Scoring
+    Archivo:   app/analysis/scoring.py (líneas 291-298)
+    Severidad: MEDIO
+    Problema: Carga TODAS las propiedades activas en memoria:
+      properties = list(result.scalars().all())
+    Con 100K props = OOM.
+    Fix: Batch processing con paginación.
+
+#27 — Deduplicación O(n²)
+    Archivo:   app/analysis/filters.py (líneas 176-199)
+    Severidad: MEDIO
+    Problema: Loop anidado para comparar duplicados. Con 100K props
+    son 10B comparaciones.
+    Fix: Usar deduplicación a nivel BD o fuzzy matching index.
+
+#28 — Sin Rate Limiting en API Pública
+    Archivo:   app/main.py
+    Severidad: MEDIO
+    Problema: Sin rate limiting en ningún endpoint. Un usuario puede
+    hacer requests ilimitados.
+    Fix: Agregar slowapi o middleware de rate limiting.
+
+#29 — Sin Sanitización en Comentarios de Feedback
+    Archivo:   app/models/feedback.py (línea 27)
+    Severidad: MEDIO
+    Problema: Campo comment acepta cualquier texto sin sanitizar.
+    Si se muestra en web, puede ser vector XSS.
+    Fix: Sanitizar input o escapar output.
+
+#30 — Tests Faltantes para Deduplicación
+    Archivo:   tests/test_analysis/test_filters.py
+    Severidad: MEDIO
+    Problema: Sin tests para are_duplicates ni deduplicate_properties.
+    Fix: Agregar tests con casos edge.
+
+
+================================================================================
+ISSUES BAJOS (11)
+================================================================================
+
+#31 — Frontend Query Hook No Memoizado
+    Archivo: frontend/src/lib/hooks/useOpportunities.ts
+    Fix: Memoizar objeto params.
+
+#32 — Loading State Incompleto en Admin Dashboard
+    Archivo: frontend/src/app/(admin)/admin/page.tsx
+    Fix: Mostrar error modal con retry.
+
+#33 — Nombre Incorrecto en Chart de Dashboard
+    Archivo: frontend/src/app/(admin)/admin/page.tsx (línea 34)
+    Problema: Dice "Yapo.cl" pero debería ser "ML Inmuebles".
+    Fix: Actualizar label.
+
+#34 — Sin Validación de Precio Máximo en Telegram
+    Archivo: app/notifications/telegram.py
+    Fix: Agregar validación max razonable.
+
+#35 — Comando /cancelar No Documentado
+    Archivo: app/notifications/telegram.py
+    Fix: Agregar opción cancel clara en conversación.
+
+#36 — Índice Faltante en notification_log
+    Archivo: app/models/notification_log.py
+    Problema: Query por (user_id, sent_at) no tiene índice dedicado.
+    Fix: Agregar idx_notif_user_sent ON (user_id, sent_at).
+
+#37 — Redis No Se Usa
+    Archivo: docker-compose.yml, app/config.py
+    Problema: Redis definido pero nunca usado en la app.
+    Fix: Remover o implementar uso real.
+
+#38 — Falta OpenAPI Schema Descriptions
+    Archivo: app/api/*.py
+    Fix: Agregar docstrings y Pydantic response models.
+
+#39 — Docker Compose Dev vs Prod
+    Archivo: docker-compose.yml (línea 38)
+    Problema: Volume mount de código para hot-reload no existe en prod.
+    Fix: Separar docker-compose.dev.yml.
+
+#40 — Sin Mock para API Externa en Tests
+    Archivo: tests/test_analysis/test_uf_converter.py
+    Fix: Mockear httpx client; testear escenarios de fallo.
+
+#41 — Mensajes de Error Inconsistentes en Telegram
+    Archivo: app/notifications/telegram.py
+    Fix: Estandarizar y linkear a comandos relevantes.
+
+
+================================================================================
+PLAN DE REMEDIACIÓN (Por Prioridad)
+================================================================================
+
+INMEDIATO (antes de producción):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[ ] #1  Fix race condition en upsert (ON CONFLICT DO UPDATE)
+[ ] #2  Fix status code 404 (HTTPException)
+[ ] #3  Circuit breaker en API UF
+[ ] #7  Autenticación en endpoints admin
+[ ] #5  Remover credenciales hardcodeadas
+[ ] #6  CORS configurable por env var
+
+CORTO PLAZO (sprint siguiente):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[ ] #4  Validar parámetro commune
+[ ] #8  Verificar bot Telegram en health check
+[ ] #9  Loggear errores de BD correctamente
+[ ] #10 JOIN en query de oportunidades
+[ ] #11 Cursor-based pagination
+[ ] #28 Rate limiting en API
+[ ] #13 Validar UUID en feedback
+
+MEDIANO PLAZO:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[ ] #12 Deduplicación transaccional
+[ ] #15 TTL en UF cache
+[ ] #22 Locking en market averages
+[ ] #26 Batch processing en scoring
+[ ] #27 Optimizar deduplicación O(n²)
+[ ] #30 Tests para deduplicación
+[ ] #40 Mocks para API externa
+
+CONTINUO:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[ ] Code review checklist con estos issues
+[ ] Security scanning en CI/CD
+[ ] Load testing antes de producción
+[ ] Monitoreo de salud de scrapers
