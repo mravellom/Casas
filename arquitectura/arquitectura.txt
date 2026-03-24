@@ -1,0 +1,556 @@
+================================================================================
+  INMOALERT CHILE — MVP
+  DOCUMENTO DE ARQUITECTURA
+================================================================================
+
+1. FICHA DEL PROYECTO
+================================================================================
+
+Nombre:           InmoAlert Chile (MVP)
+Geografía:        Región Metropolitana (Santiago de Chile)
+Comunas objetivo: Santiago Centro, San Miguel, Estación Central, Ñuñoa
+Activo:           Departamentos (1 y 2 dormitorios)
+Operación:        Compra/Venta
+Rango de precio:  1,500 UF – 4,000 UF
+Moneda:           UF (Unidad de Fomento)
+Portales fuente:  Portal Inmobiliario (portalinmobiliario.com)
+                  Yapo.cl
+
+
+2. ESTRUCTURA DEL PROYECTO
+================================================================================
+
+inmoalert/
+├── app/
+│   ├── __init__.py
+│   ├── main.py                  # Entry point FastAPI
+│   ├── config.py                # Settings (DB, Telegram, UF, proxies)
+│   ├── database.py              # Conexión y sesión PostgreSQL
+│   │
+│   ├── models/                  # Modelos SQLAlchemy
+│   │   ├── __init__.py
+│   │   ├── property.py          # Tabla: properties
+│   │   ├── market_average.py    # Tabla: market_averages
+│   │   ├── alert.py             # Tabla: alerts (preferencias usuario)
+│   │   └── user.py              # Tabla: users
+│   │
+│   ├── scrapers/                # Un scraper por portal
+│   │   ├── __init__.py
+│   │   ├── base.py              # Clase base (anti-bloqueo, rotación, retries)
+│   │   ├── portal_inmobiliario.py  # Scraper: portalinmobiliario.com
+│   │   └── yapo.py              # Scraper: yapo.cl
+│   │
+│   ├── analysis/                # Motor de detección
+│   │   ├── __init__.py
+│   │   ├── pricing.py           # Cálculo de promedio UF/m² por comuna
+│   │   ├── filters.py           # Limpieza, dedup, normalización
+│   │   ├── scoring.py           # Score de oportunidad (0-100)
+│   │   └── uf_converter.py      # Conversión UF ↔ CLP (API mindicador)
+│   │
+│   ├── notifications/           # Alertas
+│   │   ├── __init__.py
+│   │   └── telegram.py          # Bot Telegram (alertas push)
+│   │
+│   ├── api/                     # Endpoints REST
+│   │   ├── __init__.py
+│   │   ├── properties.py        # CRUD propiedades
+│   │   ├── opportunities.py     # Oportunidades detectadas
+│   │   └── health.py            # Health check
+│   │
+│   └── workers/                 # Jobs programados
+│       ├── __init__.py
+│       └── scrape_job.py        # Job periódico de scraping + análisis
+│
+├── alembic/                     # Migraciones de BD
+│   ├── env.py
+│   └── versions/
+│
+├── tests/
+│   ├── test_scrapers/
+│   ├── test_analysis/
+│   └── test_api/
+│
+├── docker-compose.yml           # PostgreSQL + Redis + App
+├── Dockerfile
+├── requirements.txt
+├── alembic.ini
+├── .env                         # Variables de entorno (NO al repo)
+├── .env.example                 # Plantilla
+├── .gitignore
+└── arquitectura/
+    └── arquitectura.txt         # Este archivo
+
+
+3. STACK TECNOLÓGICO
+================================================================================
+
+Componente          | Tecnología              | Justificación
+--------------------|-------------------------|------------------------------------------
+Lenguaje            | Python 3.11+            | Ecosistema scraping + datos
+Backend/API         | FastAPI                 | Async, docs automáticas, alto rendimiento
+Base de datos       | PostgreSQL + PostGIS    | Robusto, queries geoespaciales por comuna
+ORM                 | SQLAlchemy 2.0          | Async support, estándar industria
+Migraciones         | Alembic                 | Integración nativa con SQLAlchemy
+Scraping            | Playwright (headless)   | Portales chilenos usan JS rendering
+Anti-bloqueo        | Proxies + headers       | Rotación para evitar bans
+Deduplicación       | rapidfuzz               | Fuzzy matching entre portales
+Task Runner         | Celery + Redis          | Jobs de scraping periódicos
+                    | (Cron jobs para MVP)    | Alternativa simple para empezar
+Notificaciones      | python-telegram-bot     | Canal primario, instantáneo, gratis
+Contenedores        | Docker + Compose        | PostgreSQL + Redis dockerizados
+Validación          | Pydantic v2             | Schemas de datos, viene con FastAPI
+Valor UF            | API mindicador.cl       | Valor UF actualizado diariamente
+
+
+4. FLUJO DE DATOS (PIPELINE)
+================================================================================
+
+  [Portal Inmobiliario]          [Yapo.cl]
+         |                          |
+         v                          v
+  +----------------------------------------------------------+
+  |              CAPA DE SCRAPING (scrapers/)                 |
+  |  - Playwright headless (renderizado JS)                   |
+  |  - Filtro: deptos, 1-2 dormitorios, 1500-4000 UF         |
+  |  - Comunas: Stgo Centro, San Miguel, Est. Central, Ñuñoa |
+  |  - Rotación de proxies y User-Agent                       |
+  |  - Rate limiting (3-8 seg entre requests)                 |
+  |  - Reintentos con backoff exponencial                     |
+  +----------------------------------------------------------+
+         |
+         v
+  +----------------------------------------------------------+
+  |        CAPA DE LIMPIEZA (analysis/filters.py)             |
+  |  - Deduplicación entre portales (source_url + fuzzy)      |
+  |  - Normalización: precio a UF, superficie a m²            |
+  |  - Descarte de anuncios sin precio o sin m²               |
+  |  - Descarte de anuncios fuera del rango 1500-4000 UF      |
+  |  - Validación de comuna (solo las 4 objetivo)             |
+  +----------------------------------------------------------+
+         |
+         v
+  +----------------------------------------------------------+
+  |     CAPA DE CONVERSIÓN UF (analysis/uf_converter.py)      |
+  |  - Consulta diaria a mindicador.cl                        |
+  |  - Conversión CLP → UF para anuncios en pesos             |
+  |  - Cache del valor UF del día                              |
+  +----------------------------------------------------------+
+         |
+         v
+  +----------------------------------------------------------+
+  |       CAPA DE ANÁLISIS (analysis/pricing.py +             |
+  |                        analysis/scoring.py)               |
+  |  - Cálculo de UF/m² promedio por comuna                   |
+  |  - Comparación: precio del depto vs promedio zona          |
+  |  - Detección de keywords de urgencia en título/descripción |
+  |  - Score de oportunidad (0-100)                            |
+  |  - Marca como oportunidad si desviación < -15%            |
+  +----------------------------------------------------------+
+         |
+         v
+  +----------------------------------------------------------+
+  |        BASE DE DATOS (PostgreSQL + PostGIS)               |
+  |  - properties: deptos scrapeados                           |
+  |  - market_averages: UF/m² por comuna                       |
+  |  - alerts: preferencias de usuario                         |
+  |  - users: usuarios registrados vía Telegram                |
+  +----------------------------------------------------------+
+         |
+         v
+  +----------------------------------------------------------+
+  |        CAPA DE DISTRIBUCIÓN (notifications/)              |
+  |  - Bot Telegram: alerta instantánea para oportunidades    |
+  |  - Formato: comuna, UF, m², UF/m², % bajo mercado, link  |
+  |  - Solo alerta si score >= 70 y antigüedad < 24h          |
+  +----------------------------------------------------------+
+
+
+5. ESQUEMA DE BASE DE DATOS
+================================================================================
+
+5.1 properties (Propiedades scrapeadas)
+----------------------------------------
+Campo               | Tipo          | Descripción
+--------------------|---------------|--------------------------------------------
+id                  | UUID (PK)     | Identificador único
+source              | VARCHAR(50)   | "portal_inmobiliario" o "yapo"
+source_id           | VARCHAR(100)  | ID del anuncio en el portal origen
+source_url          | VARCHAR(500)  | URL original del anuncio
+title               | VARCHAR(300)  | Título del anuncio
+description         | TEXT          | Descripción completa
+price_uf            | DECIMAL(10,2) | Precio en UF
+price_clp           | BIGINT        | Precio en CLP (si aplica)
+m2_total            | DECIMAL(8,2)  | Superficie total en m²
+m2_util             | DECIMAL(8,2)  | Superficie útil en m²
+price_m2_uf         | DECIMAL(8,2)  | Precio UF por m² (calculado)
+bedrooms            | SMALLINT      | Dormitorios (1 o 2)
+bathrooms           | SMALLINT      | Baños
+commune             | VARCHAR(100)  | Comuna (Santiago Centro, etc.)
+address             | VARCHAR(300)  | Dirección textual
+latitude            | DECIMAL(10,7) | Coordenada lat
+longitude           | DECIMAL(10,7) | Coordenada lon
+floor               | SMALLINT      | Piso del depto
+has_parking          | BOOLEAN       | Tiene estacionamiento
+has_bodega           | BOOLEAN       | Tiene bodega
+building_year       | SMALLINT      | Año de construcción
+images              | JSON          | Array de URLs de imágenes
+raw_data            | JSON          | Datos crudos del scraping
+is_opportunity      | BOOLEAN       | Marcada como oportunidad (default false)
+opportunity_score   | SMALLINT      | Score (0-100, null si no analizada)
+has_urgency_keyword | BOOLEAN       | Contiene keywords de urgencia
+is_active           | BOOLEAN       | Anuncio vigente (default true)
+first_seen_at       | TIMESTAMPTZ   | Primera vez detectado
+last_seen_at        | TIMESTAMPTZ   | Última vez visto
+published_at        | TIMESTAMPTZ   | Fecha de publicación en el portal
+created_at          | TIMESTAMPTZ   | Creación en nuestra DB
+updated_at          | TIMESTAMPTZ   | Última actualización
+
+ÍNDICES:
+- idx_properties_commune ON (commune)
+- idx_properties_price_uf ON (price_uf)
+- idx_properties_source_id ON (source, source_id) UNIQUE
+- idx_properties_opportunity ON (is_opportunity) WHERE is_opportunity = true
+- idx_properties_active ON (is_active) WHERE is_active = true
+
+5.2 market_averages (Promedios de mercado por comuna)
+------------------------------------------------------
+Campo               | Tipo          | Descripción
+--------------------|---------------|--------------------------------------------
+id                  | UUID (PK)     | Identificador único
+commune             | VARCHAR(100)  | Comuna
+bedrooms            | SMALLINT      | Dormitorios (1 o 2)
+avg_price_m2_uf     | DECIMAL(8,2)  | Promedio UF/m²
+median_price_m2_uf  | DECIMAL(8,2)  | Mediana UF/m²
+min_price_m2_uf     | DECIMAL(8,2)  | Mínimo UF/m²
+max_price_m2_uf     | DECIMAL(8,2)  | Máximo UF/m²
+sample_count        | INTEGER       | Propiedades en la muestra
+std_deviation       | DECIMAL(8,2)  | Desviación estándar
+last_updated        | TIMESTAMPTZ   | Última recalculación
+
+ÍNDICES:
+- idx_market_commune_beds ON (commune, bedrooms) UNIQUE
+
+5.3 alerts (Preferencias de alerta por usuario)
+-------------------------------------------------
+Campo               | Tipo          | Descripción
+--------------------|---------------|--------------------------------------------
+id                  | UUID (PK)     | Identificador único
+user_id             | UUID (FK)     | Referencia al usuario
+min_price_uf        | DECIMAL(10,2) | Precio mínimo en UF
+max_price_uf        | DECIMAL(10,2) | Precio máximo en UF
+target_communes     | JSON          | Array de comunas de interés
+min_bedrooms        | SMALLINT      | Mínimo de dormitorios
+max_bedrooms        | SMALLINT      | Máximo de dormitorios
+min_score           | SMALLINT      | Score mínimo para alertar (default 70)
+is_active           | BOOLEAN       | Alerta activa
+created_at          | TIMESTAMPTZ   | Fecha de creación
+updated_at          | TIMESTAMPTZ   | Última actualización
+
+5.4 users (Usuarios)
+----------------------
+Campo               | Tipo          | Descripción
+--------------------|---------------|--------------------------------------------
+id                  | UUID (PK)     | Identificador único
+telegram_chat_id    | VARCHAR(50)   | Chat ID de Telegram (único)
+telegram_username   | VARCHAR(100)  | Username de Telegram
+name                | VARCHAR(200)  | Nombre del usuario
+is_active           | BOOLEAN       | Usuario activo
+notifications_sent  | INTEGER       | Contador de notificaciones enviadas
+last_notified_at    | TIMESTAMPTZ   | Última notificación enviada
+created_at          | TIMESTAMPTZ   | Fecha de registro
+
+ÍNDICES:
+- idx_users_telegram ON (telegram_chat_id) UNIQUE
+
+5.5 notification_log (Historial de notificaciones)
+----------------------------------------------------
+Campo               | Tipo          | Descripción
+--------------------|---------------|--------------------------------------------
+id                  | UUID (PK)     | Identificador único
+user_id             | UUID (FK)     | Usuario notificado
+property_id         | UUID (FK)     | Propiedad notificada
+sent_at             | TIMESTAMPTZ   | Fecha/hora de envío
+channel             | VARCHAR(20)   | "telegram"
+status              | VARCHAR(20)   | "sent" / "failed" / "delivered"
+
+ÍNDICES:
+- idx_notif_user_prop ON (user_id, property_id) UNIQUE  -- evitar duplicados
+
+
+6. CRITERIOS DE "OPORTUNIDAD ORO"
+================================================================================
+
+Una propiedad se marca como oportunidad cuando cumple AL MENOS UNO
+de estos criterios:
+
+6.1 Desviación de Precio (Criterio principal)
+- Precio UF/m² del depto < -15% respecto al promedio de la comuna
+  para el mismo tipo (1 o 2 dormitorios)
+- Fórmula: ((price_m2_uf - avg_price_m2_uf) / avg_price_m2_uf) * 100
+
+6.2 Keywords de Urgencia
+- Se buscan en título Y descripción (case-insensitive):
+  "urgente", "urgencia", "remate", "conversable", "sin comisión",
+  "liquidación", "oportunidad", "bajo avalúo", "precio rebajado",
+  "necesito vender", "viaje", "apurado"
+- Si tiene keyword + desviación > -10%: también se marca
+
+6.3 Antigüedad del Aviso
+- Solo se alertan propiedades con < 24 horas desde publicación
+  o desde primera detección (first_seen_at)
+- Propiedades más antiguas se almacenan pero no se alertan
+
+6.4 Sistema de Scoring (0-100)
+Factor                              | Peso  | Cálculo
+------------------------------------|-------|----------------------------------------
+Desviación precio vs zona           | 40%   | Más negativa = más puntos
+Keywords de urgencia                | 20%   | Cada keyword suma puntos
+Antigüedad del aviso                | 15%   | Más nuevo = más puntos
+Completitud de datos                | 10%   | Más campos llenos = más confiable
+Tiene estacionamiento/bodega        | 10%   | Extras a precio bajo = oportunidad
+Superficie vs promedio              | 5%    | M² por encima del promedio = bonus
+
+Clasificación:
+- 80-100: OPORTUNIDAD ORO   → Alerta Telegram inmediata
+- 60-79:  OPORTUNIDAD PLATA → Incluir en resumen diario
+- 40-59:  OPORTUNIDAD BRONCE→ Solo en API/dashboard
+- 0-39:   DESCARTADA         → Se almacena pero no se muestra
+
+
+7. ENDPOINTS DE LA API
+================================================================================
+
+7.1 Propiedades
+GET  /api/v1/properties
+     ?commune=santiago-centro
+     &min_uf=1500&max_uf=4000
+     &bedrooms=2
+     &only_opportunities=true
+     &page=1&limit=20
+
+GET  /api/v1/properties/{id}
+
+7.2 Oportunidades
+GET  /api/v1/opportunities
+     ?commune=ñuñoa
+     &min_score=70
+     &hours=24
+
+GET  /api/v1/opportunities/top
+     ?limit=10
+
+7.3 Mercado
+GET  /api/v1/market/averages
+     ?commune=san-miguel
+
+GET  /api/v1/market/uf
+     → Valor UF actual
+
+7.4 Admin
+POST /api/v1/admin/scrape/trigger
+GET  /api/v1/admin/scrape/status
+GET  /api/v1/admin/health
+
+
+8. BOT DE TELEGRAM
+================================================================================
+
+8.1 Comandos
+/start              → Registro del usuario, bienvenida
+/comunas             → Ver/cambiar comunas de interés
+/precio              → Ver/cambiar rango de precio (UF)
+/top                 → Top 5 oportunidades del día
+/mercado             → Promedios UF/m² por comuna
+/ayuda               → Ayuda y comandos disponibles
+/stop                → Pausar notificaciones
+
+8.2 Formato de Alerta
+┌─────────────────────────────────┐
+│ 🔥 OPORTUNIDAD ORO (Score: 87) │
+├─────────────────────────────────┤
+│ 📍 Santiago Centro              │
+│ 💰 2,350 UF (mercado: 2,900 UF)│
+│ 📉 -19% bajo mercado           │
+│ 📐 45 m² | 1 dormitorio        │
+│ 💵 52.2 UF/m² (prom: 64.4)     │
+│ ⏰ Publicado hace 3 horas      │
+│ 🔑 Estacionamiento: Sí         │
+│                                 │
+│ 🔗 Ver anuncio                  │
+└─────────────────────────────────┘
+
+8.3 Reglas
+- Máximo 5 alertas por día por usuario
+- Solo alertar score >= 70 (configurable por usuario)
+- No alertar la misma propiedad dos veces al mismo usuario
+- Horario de alertas: 08:00 - 22:00 CLT
+
+
+9. ESTRATEGIA ANTI-BLOQUEO
+================================================================================
+
+9.1 Playwright Headless
+- Simula navegador real (Chrome/Chromium)
+- Renderiza JavaScript (necesario para Portal Inmobiliario)
+- Stealth mode (playwright-stealth)
+
+9.2 Rotación de User-Agent
+- Pool de 20+ User-Agents reales y actualizados
+- Rotación por request
+
+9.3 Rate Limiting Respetuoso
+- Delay aleatorio: 3-8 segundos entre páginas
+- Máximo 100 requests por sesión de scraping
+- Backoff exponencial ante errores (429, 503, timeout)
+
+9.4 Rotación de Proxies (Post-MVP)
+- Para MVP: IP directa con delays largos
+- Post-MVP: pool de proxies residenciales chilenos
+- Rotación cada 10-20 requests
+
+9.5 Horarios de Scraping
+- Ejecutar cada 4-6 horas
+- Evitar horarios pico del portal (mediodía)
+- Preferir madrugada y noche
+
+
+10. CONVERSIÓN UF
+================================================================================
+
+La UF (Unidad de Fomento) es la moneda estándar inmobiliaria en Chile.
+Su valor cambia diariamente.
+
+Fuente:     API mindicador.cl (gratuita, oficial)
+Endpoint:   https://mindicador.cl/api/uf
+Frecuencia: Consulta 1 vez al día (valor cambia diariamente)
+Cache:      Guardar valor del día en memoria/DB
+Fallback:   Usar último valor conocido si la API falla
+
+Uso:
+- Convertir anuncios publicados en CLP a UF
+- Mostrar siempre precios en UF (estándar del mercado chileno)
+- Calcular UF/m² para comparaciones
+
+
+11. INFRAESTRUCTURA
+================================================================================
+
+11.1 Docker Compose (Desarrollo + MVP)
+Servicios:
+- app:      Python 3.11 + FastAPI (puerto 8000)
+- db:       PostgreSQL 16 + PostGIS (puerto 5432)
+- redis:    Redis 7 (puerto 6379, para Celery)
+
+11.2 Producción (Post-validación)
+- VPS: Hetzner o DigitalOcean (~$5-10 USD/mes)
+- Dominio: inmoalert.cl (cuando se valide)
+- HTTPS: Let's Encrypt + Nginx
+- Backups: pg_dump diario a storage externo
+
+11.3 Variables de Entorno (.env)
+DATABASE_URL=postgresql://user:pass@db:5432/inmoalert
+REDIS_URL=redis://redis:6379/0
+TELEGRAM_BOT_TOKEN=xxx
+TELEGRAM_ADMIN_CHAT_ID=xxx
+UF_API_URL=https://mindicador.cl/api/uf
+SCRAPING_INTERVAL_HOURS=4
+MAX_ALERTS_PER_DAY=5
+OPPORTUNITY_MIN_SCORE=70
+PRICE_DEVIATION_THRESHOLD=-15
+
+
+12. ROADMAP DE IMPLEMENTACIÓN (FASES / ENTREGABLES)
+================================================================================
+
+FASE 1: INFRAESTRUCTURA Y EXTRACCIÓN DE DATOS
+-----------------------------------------------
+Entregable: Sistema de scraping funcional que extrae deptos de los
+            2 portales y los almacena en base de datos.
+
+- [ ] Setup proyecto (FastAPI + Docker Compose + PostgreSQL)
+- [ ] Modelos de datos (properties, market_averages)
+- [ ] Scraper Portal Inmobiliario (Playwright headless)
+- [ ] Scraper Yapo.cl (Playwright headless)
+- [ ] Conversión UF (integración mindicador.cl)
+- [ ] Tests básicos de scraping
+
+Criterio de aceptación: Ejecutar scraping y ver propiedades
+almacenadas en PostgreSQL con datos normalizados en UF.
+
+
+FASE 2: MOTOR DE INTELIGENCIA
+-------------------------------
+Entregable: Algoritmo que analiza propiedades, calcula promedios
+            por comuna y detecta oportunidades automáticamente.
+
+- [ ] Cálculo de promedios UF/m² por comuna
+- [ ] Algoritmo de scoring de oportunidades
+- [ ] Filtros de limpieza y deduplicación
+- [ ] Detección de keywords de urgencia
+- [ ] Job programado de scraping (cada 4-6 horas)
+- [ ] Tests de análisis
+
+Criterio de aceptación: Dado un set de propiedades, el sistema
+marca correctamente las que están ≥15% bajo el promedio de zona
+y les asigna un score coherente.
+
+
+FASE 3: DISTRIBUCIÓN Y NOTIFICACIONES
+---------------------------------------
+Entregable: Bot de Telegram operativo que registra usuarios y
+            envía alertas de oportunidades en tiempo real.
+
+- [ ] Bot de Telegram (comandos básicos)
+- [ ] Sistema de alertas push
+- [ ] Registro de usuarios vía /start
+- [ ] Preferencias de usuario (/comunas, /precio)
+- [ ] Formato de mensaje de oportunidad
+- [ ] Log de notificaciones (evitar duplicados)
+
+Criterio de aceptación: Un usuario se registra en el bot,
+configura sus preferencias, y recibe alertas automáticas
+cuando se detecta una oportunidad que coincide con su perfil.
+
+
+FASE 4: VALIDACIÓN Y AJUSTE CON USUARIOS REALES
+--------------------------------------------------
+Entregable: MVP probado con usuarios reales, con falsos positivos
+            reducidos y métricas de uso recopiladas.
+
+- [ ] Pruebas con 5 usuarios reales
+- [ ] Ajuste de threshold de oportunidad
+- [ ] Reducción de falsos positivos
+- [ ] Monitoreo de scraping (alertas si falla)
+- [ ] Documentación básica de uso
+- [ ] Endpoints API para consultas manuales
+
+Criterio de aceptación: Al menos 3 de 5 usuarios confirman
+que las oportunidades recibidas son relevantes y accionables.
+Tasa de falsos positivos < 30%.
+
+
+13. MODELO DE NEGOCIO (FASE INICIAL)
+================================================================================
+
+Fase:           Beta privada gratuita
+Acceso:         Por invitación (máx 20 usuarios)
+Entrega:        Lead procesado vía Telegram
+
+Contenido del lead:
+- Link directo al anuncio
+- Precio en UF y CLP
+- UF/m² y comparación con promedio de la comuna
+- % por debajo del mercado
+- Score de oportunidad
+- Rentabilidad estimada (si hay datos de arriendo en la zona)
+
+Métricas de validación:
+- ¿Los usuarios abren los links? (tracking)
+- ¿Las oportunidades son reales? (feedback manual)
+- ¿Cuántos falsos positivos hay? (ajustar scoring)
+- ¿Los usuarios piden más? (señal de product-market fit)
+
+Transición a pago (post-validación):
+- Free: 1 alerta/día, 1 comuna
+- Basic (5 UF/mes): 5 alertas/día, todas las comunas
+- Premium (10 UF/mes): alertas ilimitadas + reportes + API
