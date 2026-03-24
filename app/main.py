@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -7,6 +8,7 @@ from app.api.health import router as health_router
 from app.api.opportunities import router as opportunities_router
 from app.api.properties import router as properties_router
 from app.database import init_db
+from app.notifications.telegram import build_telegram_app
 from app.workers.scheduler import start_scheduler, stop_scheduler
 
 # Configurar logging
@@ -15,12 +17,36 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
+logger = logging.getLogger(__name__)
+
+# Referencia global al bot
+_telegram_app = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _telegram_app
+
     await init_db()
     start_scheduler()
+
+    # Iniciar bot de Telegram en background
+    _telegram_app = build_telegram_app()
+    if _telegram_app:
+        await _telegram_app.initialize()
+        await _telegram_app.start()
+        await _telegram_app.updater.start_polling(drop_pending_updates=True)
+        logger.info("Bot de Telegram iniciado")
+
     yield
+
+    # Detener bot de Telegram
+    if _telegram_app:
+        await _telegram_app.updater.stop()
+        await _telegram_app.stop()
+        await _telegram_app.shutdown()
+        logger.info("Bot de Telegram detenido")
+
     stop_scheduler()
 
 

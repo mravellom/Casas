@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from sqlalchemy import select as sa_select
+
 from app.analysis.filters import deduplicate_properties
 from app.analysis.pricing import update_market_averages
 from app.analysis.scoring import score_all_properties
@@ -10,6 +12,7 @@ from app.analysis.uf_converter import clp_to_uf, get_uf_value
 from app.config import settings
 from app.database import async_session
 from app.models.property import Property
+from app.notifications.telegram import send_opportunity_alerts
 from app.scrapers.base import ScrapedProperty
 from app.scrapers.portal_inmobiliario import PortalInmobiliarioScraper
 from app.scrapers.yapo import YapoScraper
@@ -46,6 +49,29 @@ async def run_full_pipeline():
         )
     except Exception as e:
         logger.error(f"Error en scoring: {e}")
+
+    # Paso 5: Enviar alertas por Telegram
+    try:
+        async with async_session() as session:
+            stmt = (
+                sa_select(Property)
+                .where(
+                    Property.is_opportunity == True,  # noqa: E712
+                    Property.is_active == True,  # noqa: E712
+                    Property.opportunity_score >= settings.opportunity_min_score,
+                )
+                .order_by(Property.opportunity_score.desc())
+            )
+            result = await session.execute(stmt)
+            new_opportunities = list(result.scalars().all())
+
+        if new_opportunities:
+            sent = await send_opportunity_alerts(new_opportunities)
+            logger.info(f"Paso 5 - Alertas: {sent} notificaciones enviadas")
+        else:
+            logger.info("Paso 5 - Alertas: sin oportunidades para notificar")
+    except Exception as e:
+        logger.error(f"Error en alertas: {e}")
 
     logger.info("========== PIPELINE COMPLETO FINALIZADO ==========")
 
