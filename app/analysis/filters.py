@@ -166,9 +166,10 @@ async def deduplicate_properties():
                 select(Property)
                 .where(
                     Property.commune == commune,
-                    Property.is_active == True,  # noqa: E712
+                    Property.is_active.is_(True),
                 )
                 .order_by(Property.created_at)
+                .with_for_update()
             )
             result = await session.execute(stmt)
             props = list(result.scalars().all())

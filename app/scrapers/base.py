@@ -56,7 +56,7 @@ class BaseScraper(ABC):
     def __init__(self):
         self.browser: Browser | None = None
         self.request_count: int = 0
-        self.max_requests_per_session: int = 100
+        self.max_requests_per_session: int = settings.scraping_max_requests_per_session
 
     async def start(self):
         """Inicia el navegador Playwright."""

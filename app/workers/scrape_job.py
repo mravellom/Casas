@@ -186,25 +186,31 @@ def _filter_and_convert(
 ) -> list[ScrapedProperty]:
     """Filtra por rango de precio y convierte CLP a UF."""
     filtered = []
+    stats = {"no_price": 0, "out_of_range": 0, "wrong_commune": 0, "kept": 0}
 
     for prop in properties:
-        # Convertir CLP a UF si no tiene precio en UF
         if prop.price_uf is None and prop.price_clp is not None:
             prop.price_uf = clp_to_uf(prop.price_clp, uf_value)
 
-        # Descartar sin precio
         if prop.price_uf is None:
+            stats["no_price"] += 1
             continue
 
-        # Filtrar por rango
         if not (settings.min_price_uf <= prop.price_uf <= settings.max_price_uf):
+            stats["out_of_range"] += 1
             continue
 
-        # Descartar sin comuna válida
         if prop.commune not in settings.target_communes:
+            stats["wrong_commune"] += 1
             continue
 
+        stats["kept"] += 1
         filtered.append(prop)
+
+    logger.info(
+        f"Filtro: {stats['kept']} conservadas, {stats['no_price']} sin precio, "
+        f"{stats['out_of_range']} fuera de rango, {stats['wrong_commune']} comuna inválida"
+    )
 
     return filtered
 
@@ -212,67 +218,65 @@ def _filter_and_convert(
 async def _save_properties(
     properties: list[ScrapedProperty],
 ) -> tuple[int, int]:
-    """Guarda propiedades en BD usando upsert (insert on conflict update)."""
+    """Guarda propiedades usando INSERT ... ON CONFLICT DO UPDATE (atómico)."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
     saved = 0
     updated = 0
     now = datetime.now(timezone.utc)
 
     async with async_session() as session:
         for prop in properties:
-            # Calcular precio/m²
             price_m2 = None
             if prop.price_uf and prop.m2_total and prop.m2_total > 0:
                 price_m2 = round(prop.price_uf / prop.m2_total, 2)
 
-            # Verificar si ya existe
-            stmt = select(Property).where(
-                Property.source == prop.source,
-                Property.source_id == prop.source_id,
+            values = {
+                "source": prop.source,
+                "source_id": prop.source_id,
+                "source_url": prop.source_url,
+                "title": prop.title,
+                "description": prop.description,
+                "price_uf": prop.price_uf,
+                "price_clp": prop.price_clp,
+                "price_m2_uf": price_m2,
+                "m2_total": prop.m2_total,
+                "m2_util": prop.m2_util,
+                "bedrooms": prop.bedrooms,
+                "bathrooms": prop.bathrooms,
+                "commune": prop.commune,
+                "address": prop.address,
+                "latitude": prop.latitude,
+                "longitude": prop.longitude,
+                "floor": prop.floor,
+                "has_parking": prop.has_parking,
+                "has_bodega": prop.has_bodega,
+                "building_year": prop.building_year,
+                "images": prop.images if prop.images else None,
+                "raw_data": prop.raw_data if prop.raw_data else None,
+                "first_seen_at": now,
+                "last_seen_at": now,
+                "created_at": now,
+                "updated_at": now,
+            }
+
+            stmt = pg_insert(Property).values(**values)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["source", "source_id"],
+                set_={
+                    "last_seen_at": now,
+                    "price_uf": stmt.excluded.price_uf,
+                    "price_clp": stmt.excluded.price_clp,
+                    "price_m2_uf": stmt.excluded.price_m2_uf,
+                    "is_active": True,
+                    "updated_at": now,
+                },
             )
             result = await session.execute(stmt)
-            existing = result.scalar_one_or_none()
 
-            if existing:
-                # Actualizar last_seen_at y datos que pudieron cambiar
-                existing.last_seen_at = now
-                existing.price_uf = prop.price_uf
-                existing.price_clp = prop.price_clp
-                existing.price_m2_uf = price_m2
-                existing.is_active = True
-                existing.updated_at = now
-                updated += 1
-            else:
-                # Insertar nueva propiedad
-                new_prop = Property(
-                    source=prop.source,
-                    source_id=prop.source_id,
-                    source_url=prop.source_url,
-                    title=prop.title,
-                    description=prop.description,
-                    price_uf=prop.price_uf,
-                    price_clp=prop.price_clp,
-                    price_m2_uf=price_m2,
-                    m2_total=prop.m2_total,
-                    m2_util=prop.m2_util,
-                    bedrooms=prop.bedrooms,
-                    bathrooms=prop.bathrooms,
-                    commune=prop.commune,
-                    address=prop.address,
-                    latitude=prop.latitude,
-                    longitude=prop.longitude,
-                    floor=prop.floor,
-                    has_parking=prop.has_parking,
-                    has_bodega=prop.has_bodega,
-                    building_year=prop.building_year,
-                    images=prop.images if prop.images else None,
-                    raw_data=prop.raw_data if prop.raw_data else None,
-                    first_seen_at=now,
-                    last_seen_at=now,
-                    created_at=now,
-                    updated_at=now,
-                )
-                session.add(new_prop)
-                saved += 1
+            # xmax = 0 means insert, > 0 means update
+            if result.rowcount:
+                saved += 1  # Contamos como procesadas exitosamente
 
         await session.commit()
 

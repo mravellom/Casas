@@ -31,7 +31,7 @@ export default function AdminDashboard() {
   }));
 
   const sourceData = Object.entries(metrics.properties.by_source).map(([name, count]) => ({
-    name: name === "portal_inmobiliario" ? "Portal Inmob." : "Yapo.cl",
+    name: name === "portal_inmobiliario" ? "Portal Inmob." : name === "mercadolibre_inmuebles" ? "ML Inmuebles" : name,
     value: count,
   }));
 

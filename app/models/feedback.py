@@ -1,9 +1,10 @@
+import re
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, SmallInteger, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.database import Base
 
@@ -29,6 +30,16 @@ class Feedback(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+    __table_args__ = (
+        Index("idx_feedback_user_prop", "user_id", "property_id", unique=True),
+    )
+
+    @validates("comment")
+    def sanitize_comment(self, key: str, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return re.sub(r"<[^>]+>", "", value)[:1000]
 
     def __repr__(self) -> str:
         quality = "buena" if self.is_good else "mala"

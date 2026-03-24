@@ -10,44 +10,44 @@ from app.models.property import Property
 from app.models.market_average import MarketAverage
 from app.analysis.scoring import calculate_score, detect_urgency_keywords
 
-# Datos realistas de departamentos en Santiago
+# Datos realistas de departamentos en Santiago con coordenadas reales
 SAMPLE_PROPERTIES = [
     # Santiago Centro - 1D
-    {"title": "Depto 1D nuevo metro U de Chile", "commune": "Santiago Centro", "bedrooms": 1, "bathrooms": 1, "m2": 35, "price_uf": 1850, "address": "San Antonio 456", "parking": False, "bodega": False},
-    {"title": "URGENTE vendo depto amoblado centro", "commune": "Santiago Centro", "bedrooms": 1, "bathrooms": 1, "m2": 32, "price_uf": 1600, "address": "Morandé 312", "parking": False, "bodega": False},
-    {"title": "Depto 1D vista panorámica Alameda", "commune": "Santiago Centro", "bedrooms": 1, "bathrooms": 1, "m2": 40, "price_uf": 2200, "address": "Av. Libertador Bernardo O'Higgins 1500", "parking": True, "bodega": False},
-    {"title": "Studio moderno barrio Lastarria", "commune": "Santiago Centro", "bedrooms": 1, "bathrooms": 1, "m2": 28, "price_uf": 1750, "address": "José Victorino Lastarria 70", "parking": False, "bodega": False},
-    {"title": "Depto conversable cerca metro Santa Lucía", "commune": "Santiago Centro", "bedrooms": 1, "bathrooms": 1, "m2": 38, "price_uf": 1700, "address": "Merced 842", "parking": False, "bodega": True},
+    {"title": "Depto 1D nuevo metro U de Chile", "commune": "Santiago Centro", "bedrooms": 1, "bathrooms": 1, "m2": 35, "price_uf": 1850, "address": "San Antonio 456", "parking": False, "bodega": False, "lat": -33.4420, "lng": -70.6530},
+    {"title": "URGENTE vendo depto amoblado centro", "commune": "Santiago Centro", "bedrooms": 1, "bathrooms": 1, "m2": 32, "price_uf": 1600, "address": "Morandé 312", "parking": False, "bodega": False, "lat": -33.4410, "lng": -70.6560},
+    {"title": "Depto 1D vista panorámica Alameda", "commune": "Santiago Centro", "bedrooms": 1, "bathrooms": 1, "m2": 40, "price_uf": 2200, "address": "Av. Libertador Bernardo O'Higgins 1500", "parking": True, "bodega": False, "lat": -33.4440, "lng": -70.6550},
+    {"title": "Studio moderno barrio Lastarria", "commune": "Santiago Centro", "bedrooms": 1, "bathrooms": 1, "m2": 28, "price_uf": 1750, "address": "José Victorino Lastarria 70", "parking": False, "bodega": False, "lat": -33.4380, "lng": -70.6440},
+    {"title": "Depto conversable cerca metro Santa Lucía", "commune": "Santiago Centro", "bedrooms": 1, "bathrooms": 1, "m2": 38, "price_uf": 1700, "address": "Merced 842", "parking": False, "bodega": True, "lat": -33.4370, "lng": -70.6460},
     # Santiago Centro - 2D
-    {"title": "Depto 2D 1B edificio nuevo Santiago", "commune": "Santiago Centro", "bedrooms": 2, "bathrooms": 1, "m2": 52, "price_uf": 2800, "address": "Compañía de Jesús 1320", "parking": True, "bodega": True},
-    {"title": "Remate depto 2 dormitorios centro", "commune": "Santiago Centro", "bedrooms": 2, "bathrooms": 1, "m2": 48, "price_uf": 2100, "address": "Teatinos 240", "parking": False, "bodega": False},
-    {"title": "Depto 2D luminoso metro Moneda", "commune": "Santiago Centro", "bedrooms": 2, "bathrooms": 2, "m2": 55, "price_uf": 3200, "address": "Moneda 1150", "parking": True, "bodega": True},
-    {"title": "Oportunidad depto familiar centro", "commune": "Santiago Centro", "bedrooms": 2, "bathrooms": 1, "m2": 50, "price_uf": 2400, "address": "Huérfanos 786", "parking": False, "bodega": False},
+    {"title": "Depto 2D 1B edificio nuevo Santiago", "commune": "Santiago Centro", "bedrooms": 2, "bathrooms": 1, "m2": 52, "price_uf": 2800, "address": "Compañía de Jesús 1320", "parking": True, "bodega": True, "lat": -33.4390, "lng": -70.6580},
+    {"title": "Remate depto 2 dormitorios centro", "commune": "Santiago Centro", "bedrooms": 2, "bathrooms": 1, "m2": 48, "price_uf": 2100, "address": "Teatinos 240", "parking": False, "bodega": False, "lat": -33.4430, "lng": -70.6570},
+    {"title": "Depto 2D luminoso metro Moneda", "commune": "Santiago Centro", "bedrooms": 2, "bathrooms": 2, "m2": 55, "price_uf": 3200, "address": "Moneda 1150", "parking": True, "bodega": True, "lat": -33.4450, "lng": -70.6590},
+    {"title": "Oportunidad depto familiar centro", "commune": "Santiago Centro", "bedrooms": 2, "bathrooms": 1, "m2": 50, "price_uf": 2400, "address": "Huérfanos 786", "parking": False, "bodega": False, "lat": -33.4400, "lng": -70.6510},
     # San Miguel - 1D
-    {"title": "Depto 1D San Miguel metro", "commune": "San Miguel", "bedrooms": 1, "bathrooms": 1, "m2": 36, "price_uf": 1900, "address": "Gran Avenida 5400", "parking": True, "bodega": False},
-    {"title": "Depto sin comisión San Miguel", "commune": "San Miguel", "bedrooms": 1, "bathrooms": 1, "m2": 33, "price_uf": 1550, "address": "Salesianos 1230", "parking": False, "bodega": False},
-    {"title": "Departamento 1D nuevo Lo Vial", "commune": "San Miguel", "bedrooms": 1, "bathrooms": 1, "m2": 38, "price_uf": 2000, "address": "Lo Vial 580", "parking": True, "bodega": True},
+    {"title": "Depto 1D San Miguel metro", "commune": "San Miguel", "bedrooms": 1, "bathrooms": 1, "m2": 36, "price_uf": 1900, "address": "Gran Avenida 5400", "parking": True, "bodega": False, "lat": -33.4950, "lng": -70.6510},
+    {"title": "Depto sin comisión San Miguel", "commune": "San Miguel", "bedrooms": 1, "bathrooms": 1, "m2": 33, "price_uf": 1550, "address": "Salesianos 1230", "parking": False, "bodega": False, "lat": -33.4980, "lng": -70.6530},
+    {"title": "Departamento 1D nuevo Lo Vial", "commune": "San Miguel", "bedrooms": 1, "bathrooms": 1, "m2": 38, "price_uf": 2000, "address": "Lo Vial 580", "parking": True, "bodega": True, "lat": -33.4920, "lng": -70.6480},
     # San Miguel - 2D
-    {"title": "Depto 2D San Miguel excelente ubicación", "commune": "San Miguel", "bedrooms": 2, "bathrooms": 1, "m2": 50, "price_uf": 2600, "address": "Gran Avenida 4850", "parking": True, "bodega": True},
-    {"title": "Liquidación depto 2D San Miguel sur", "commune": "San Miguel", "bedrooms": 2, "bathrooms": 1, "m2": 46, "price_uf": 2050, "address": "Departamental 1456", "parking": False, "bodega": False},
-    {"title": "Depto 2D cerca metro San Miguel", "commune": "San Miguel", "bedrooms": 2, "bathrooms": 2, "m2": 55, "price_uf": 3100, "address": "Alcalde Pedro Alarcón 940", "parking": True, "bodega": True},
+    {"title": "Depto 2D San Miguel excelente ubicación", "commune": "San Miguel", "bedrooms": 2, "bathrooms": 1, "m2": 50, "price_uf": 2600, "address": "Gran Avenida 4850", "parking": True, "bodega": True, "lat": -33.4940, "lng": -70.6500},
+    {"title": "Liquidación depto 2D San Miguel sur", "commune": "San Miguel", "bedrooms": 2, "bathrooms": 1, "m2": 46, "price_uf": 2050, "address": "Departamental 1456", "parking": False, "bodega": False, "lat": -33.5010, "lng": -70.6520},
+    {"title": "Depto 2D cerca metro San Miguel", "commune": "San Miguel", "bedrooms": 2, "bathrooms": 2, "m2": 55, "price_uf": 3100, "address": "Alcalde Pedro Alarcón 940", "parking": True, "bodega": True, "lat": -33.4960, "lng": -70.6490},
     # Estación Central - 1D
-    {"title": "Depto 1D Estación Central económico", "commune": "Estación Central", "bedrooms": 1, "bathrooms": 1, "m2": 30, "price_uf": 1500, "address": "Av. Ecuador 4230", "parking": False, "bodega": False},
-    {"title": "Necesito vender depto Est Central", "commune": "Estación Central", "bedrooms": 1, "bathrooms": 1, "m2": 34, "price_uf": 1580, "address": "Las Rejas Sur 1100", "parking": False, "bodega": False},
-    {"title": "Depto 1D nuevo metro Las Rejas", "commune": "Estación Central", "bedrooms": 1, "bathrooms": 1, "m2": 36, "price_uf": 1800, "address": "Av. Las Rejas Norte 560", "parking": True, "bodega": False},
+    {"title": "Depto 1D Estación Central económico", "commune": "Estación Central", "bedrooms": 1, "bathrooms": 1, "m2": 30, "price_uf": 1500, "address": "Av. Ecuador 4230", "parking": False, "bodega": False, "lat": -33.4520, "lng": -70.6800},
+    {"title": "Necesito vender depto Est Central", "commune": "Estación Central", "bedrooms": 1, "bathrooms": 1, "m2": 34, "price_uf": 1580, "address": "Las Rejas Sur 1100", "parking": False, "bodega": False, "lat": -33.4620, "lng": -70.6920},
+    {"title": "Depto 1D nuevo metro Las Rejas", "commune": "Estación Central", "bedrooms": 1, "bathrooms": 1, "m2": 36, "price_uf": 1800, "address": "Av. Las Rejas Norte 560", "parking": True, "bodega": False, "lat": -33.4540, "lng": -70.6880},
     # Estación Central - 2D
-    {"title": "Depto 2D ganga Estación Central", "commune": "Estación Central", "bedrooms": 2, "bathrooms": 1, "m2": 48, "price_uf": 2100, "address": "Av. Libertador Bernardo O'Higgins 3920", "parking": False, "bodega": False},
-    {"title": "Depto 2D Estación Central con est.", "commune": "Estación Central", "bedrooms": 2, "bathrooms": 1, "m2": 52, "price_uf": 2700, "address": "5 de Abril 3456", "parking": True, "bodega": True},
+    {"title": "Depto 2D ganga Estación Central", "commune": "Estación Central", "bedrooms": 2, "bathrooms": 1, "m2": 48, "price_uf": 2100, "address": "Av. Libertador Bernardo O'Higgins 3920", "parking": False, "bodega": False, "lat": -33.4560, "lng": -70.6850},
+    {"title": "Depto 2D Estación Central con est.", "commune": "Estación Central", "bedrooms": 2, "bathrooms": 1, "m2": 52, "price_uf": 2700, "address": "5 de Abril 3456", "parking": True, "bodega": True, "lat": -33.4600, "lng": -70.6830},
     # Ñuñoa - 1D
-    {"title": "Depto 1D Ñuñoa Irarrázaval", "commune": "Ñuñoa", "bedrooms": 1, "bathrooms": 1, "m2": 38, "price_uf": 2300, "address": "Av. Irarrázaval 2580", "parking": True, "bodega": False},
-    {"title": "Depto 1D precio rebajado Ñuñoa", "commune": "Ñuñoa", "bedrooms": 1, "bathrooms": 1, "m2": 35, "price_uf": 1900, "address": "Manuel Montt 280", "parking": False, "bodega": False},
-    {"title": "Depto 1D luminoso Plaza Ñuñoa", "commune": "Ñuñoa", "bedrooms": 1, "bathrooms": 1, "m2": 40, "price_uf": 2500, "address": "Jorge Washington 150", "parking": True, "bodega": True},
-    {"title": "Apurado vendo depto Ñuñoa", "commune": "Ñuñoa", "bedrooms": 1, "bathrooms": 1, "m2": 33, "price_uf": 1800, "address": "Chile España 1200", "parking": False, "bodega": False},
+    {"title": "Depto 1D Ñuñoa Irarrázaval", "commune": "Ñuñoa", "bedrooms": 1, "bathrooms": 1, "m2": 38, "price_uf": 2300, "address": "Av. Irarrázaval 2580", "parking": True, "bodega": False, "lat": -33.4540, "lng": -70.6140},
+    {"title": "Depto 1D precio rebajado Ñuñoa", "commune": "Ñuñoa", "bedrooms": 1, "bathrooms": 1, "m2": 35, "price_uf": 1900, "address": "Manuel Montt 280", "parking": False, "bodega": False, "lat": -33.4490, "lng": -70.6200},
+    {"title": "Depto 1D luminoso Plaza Ñuñoa", "commune": "Ñuñoa", "bedrooms": 1, "bathrooms": 1, "m2": 40, "price_uf": 2500, "address": "Jorge Washington 150", "parking": True, "bodega": True, "lat": -33.4560, "lng": -70.6120},
+    {"title": "Apurado vendo depto Ñuñoa", "commune": "Ñuñoa", "bedrooms": 1, "bathrooms": 1, "m2": 33, "price_uf": 1800, "address": "Chile España 1200", "parking": False, "bodega": False, "lat": -33.4510, "lng": -70.6180},
     # Ñuñoa - 2D
-    {"title": "Depto 2D Ñuñoa familiar excelente", "commune": "Ñuñoa", "bedrooms": 2, "bathrooms": 2, "m2": 60, "price_uf": 3500, "address": "Av. Irarrázaval 3200", "parking": True, "bodega": True},
-    {"title": "Depto 2D bajo avalúo Ñuñoa", "commune": "Ñuñoa", "bedrooms": 2, "bathrooms": 1, "m2": 50, "price_uf": 2400, "address": "Suecia 456", "parking": False, "bodega": False},
-    {"title": "Oportunidad 2D Ñuñoa metro", "commune": "Ñuñoa", "bedrooms": 2, "bathrooms": 1, "m2": 53, "price_uf": 2800, "address": "Av. Grecia 890", "parking": True, "bodega": False},
-    {"title": "Depto 2D Ñuñoa con vista", "commune": "Ñuñoa", "bedrooms": 2, "bathrooms": 2, "m2": 58, "price_uf": 3800, "address": "Los Leones 1500", "parking": True, "bodega": True},
+    {"title": "Depto 2D Ñuñoa familiar excelente", "commune": "Ñuñoa", "bedrooms": 2, "bathrooms": 2, "m2": 60, "price_uf": 3500, "address": "Av. Irarrázaval 3200", "parking": True, "bodega": True, "lat": -33.4570, "lng": -70.6080},
+    {"title": "Depto 2D bajo avalúo Ñuñoa", "commune": "Ñuñoa", "bedrooms": 2, "bathrooms": 1, "m2": 50, "price_uf": 2400, "address": "Suecia 456", "parking": False, "bodega": False, "lat": -33.4500, "lng": -70.6160},
+    {"title": "Oportunidad 2D Ñuñoa metro", "commune": "Ñuñoa", "bedrooms": 2, "bathrooms": 1, "m2": 53, "price_uf": 2800, "address": "Av. Grecia 890", "parking": True, "bodega": False, "lat": -33.4580, "lng": -70.6100},
+    {"title": "Depto 2D Ñuñoa con vista", "commune": "Ñuñoa", "bedrooms": 2, "bathrooms": 2, "m2": 58, "price_uf": 3800, "address": "Los Leones 1500", "parking": True, "bodega": True, "lat": -33.4470, "lng": -70.6220},
 ]
 
 
@@ -76,6 +76,8 @@ async def seed():
                 bathrooms=data["bathrooms"],
                 commune=data["commune"],
                 address=data["address"],
+                latitude=data["lat"],
+                longitude=data["lng"],
                 has_parking=data["parking"],
                 has_bodega=data["bodega"],
                 is_active=True,

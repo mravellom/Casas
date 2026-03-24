@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import verify_admin_key
 from app.database import get_session
 from app.models.feedback import Feedback
 from app.models.property import Property
@@ -32,23 +33,31 @@ async def health_check(session: AsyncSession = Depends(get_session)):
         )
         property_count = result.scalar() or 0
         db_status = "connected"
-    except Exception:
+    except Exception as e:
+        logger.error(f"Health check DB error: {e}", exc_info=True)
         property_count = 0
-        db_status = "error"
+        db_status = f"error: {type(e).__name__}"
+
+    from app.main import get_telegram_status
+    telegram_status = get_telegram_status()
+    status = "ok" if db_status == "connected" else "degraded"
+    if telegram_status == "failed":
+        status = "degraded"
 
     return {
-        "status": "ok",
+        "status": status,
         "service": "InmoAlert Chile",
         "version": "0.1.0",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "database": db_status,
+        "telegram_bot": telegram_status,
         "properties_in_db": property_count,
     }
 
 
 @router.post("/scrape/trigger")
-async def trigger_pipeline(background_tasks: BackgroundTasks):
-    """Dispara el pipeline completo: scraping → dedup → pricing → scoring → alertas."""
+async def trigger_pipeline(background_tasks: BackgroundTasks, _key: str = Depends(verify_admin_key)):
+    """Dispara el pipeline completo (requiere API key)."""
     if _pipeline_status["running"]:
         return {"status": "already_running", "message": "Pipeline ya está en ejecución"}
 
@@ -62,8 +71,8 @@ async def pipeline_status():
 
 
 @router.get("/metrics")
-async def metrics():
-    """Métricas del sistema: propiedades, oportunidades, usuarios, alertas."""
+async def metrics(_key: str = Depends(verify_admin_key)):
+    """Métricas del sistema (requiere API key)."""
     return await get_system_metrics()
 
 
@@ -74,7 +83,7 @@ async def pipeline_logs(limit: int = Query(10, ge=1, le=50)):
 
 
 @router.get("/feedback/stats")
-async def feedback_stats(session: AsyncSession = Depends(get_session)):
+async def feedback_stats(session: AsyncSession = Depends(get_session), _key: str = Depends(verify_admin_key)):
     """Estadísticas de feedback: tasa de falsos positivos."""
     # Total feedback
     total_stmt = select(func.count()).select_from(Feedback)

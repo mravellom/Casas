@@ -1,12 +1,21 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_session
 from app.models.market_average import MarketAverage
 from app.models.property import Property
 
 router = APIRouter(prefix="/api/v1/opportunities", tags=["opportunities"])
+
+
+def _validate_commune(commune: str | None) -> None:
+    if commune and commune not in settings.target_communes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Comuna '{commune}' no válida. Opciones: {settings.target_communes}",
+        )
 
 
 @router.get("")
@@ -16,14 +25,15 @@ async def list_opportunities(
     min_uf: float | None = Query(None, ge=0),
     max_uf: float | None = Query(None, ge=0),
     bedrooms: int | None = Query(None, ge=1, le=5),
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=500),
     limit: int = Query(20, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
 ):
     """Lista oportunidades detectadas, ordenadas por score descendente."""
+    _validate_commune(commune)
     stmt = select(Property).where(
-        Property.is_opportunity == True,  # noqa: E712
-        Property.is_active == True,  # noqa: E712
+        Property.is_opportunity.is_(True),
+        Property.is_active.is_(True),
         Property.opportunity_score >= min_score,
     )
 

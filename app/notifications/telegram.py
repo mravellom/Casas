@@ -716,29 +716,31 @@ async def callback_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, quality, property_id = parts
     is_good = quality == "good"
 
+    # Validar UUID
+    try:
+        import uuid as uuid_mod
+        uuid_mod.UUID(property_id)
+    except ValueError:
+        logger.warning(f"Invalid property_id in feedback: {property_id}")
+        return
+
     async with async_session() as session:
         user = await _get_user(session, chat_id)
         if not user:
             return
 
-        # Verificar si ya dio feedback para esta propiedad
-        stmt = select(Feedback).where(
-            Feedback.user_id == user.id,
-            Feedback.property_id == property_id,
+        # Upsert atómico — evita race condition
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        stmt = pg_insert(Feedback).values(
+            user_id=user.id,
+            property_id=property_id,
+            is_good=is_good,
         )
-        result = await session.execute(stmt)
-        existing = result.scalar_one_or_none()
-
-        if existing:
-            existing.is_good = is_good
-        else:
-            fb = Feedback(
-                user_id=user.id,
-                property_id=property_id,
-                is_good=is_good,
-            )
-            session.add(fb)
-
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["user_id", "property_id"],
+            set_={"is_good": is_good},
+        )
+        await session.execute(stmt)
         await session.commit()
 
     label = "BUENA" if is_good else "MALA"

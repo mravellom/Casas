@@ -92,37 +92,35 @@ async def _calculate_zone_stats(
 async def _upsert_market_average(
     session: AsyncSession, commune: str, bedrooms: int, stats: dict
 ):
-    """Inserta o actualiza el promedio de mercado para una zona."""
-    stmt = select(MarketAverage).where(
-        MarketAverage.commune == commune,
-        MarketAverage.bedrooms == bedrooms,
-    )
-    result = await session.execute(stmt)
-    existing = result.scalar_one_or_none()
+    """Inserta o actualiza el promedio de mercado (atómico con ON CONFLICT)."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     now = datetime.now(timezone.utc)
 
-    if existing:
-        existing.avg_price_m2_uf = stats["avg"]
-        existing.median_price_m2_uf = stats["median"]
-        existing.min_price_m2_uf = stats["min"]
-        existing.max_price_m2_uf = stats["max"]
-        existing.std_deviation = stats["std"]
-        existing.sample_count = stats["count"]
-        existing.last_updated = now
-    else:
-        new_avg = MarketAverage(
-            commune=commune,
-            bedrooms=bedrooms,
-            avg_price_m2_uf=stats["avg"],
-            median_price_m2_uf=stats["median"],
-            min_price_m2_uf=stats["min"],
-            max_price_m2_uf=stats["max"],
-            std_deviation=stats["std"],
-            sample_count=stats["count"],
-            last_updated=now,
-        )
-        session.add(new_avg)
+    stmt = pg_insert(MarketAverage).values(
+        commune=commune,
+        bedrooms=bedrooms,
+        avg_price_m2_uf=stats["avg"],
+        median_price_m2_uf=stats["median"],
+        min_price_m2_uf=stats["min"],
+        max_price_m2_uf=stats["max"],
+        std_deviation=stats["std"],
+        sample_count=stats["count"],
+        last_updated=now,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["commune", "bedrooms"],
+        set_={
+            "avg_price_m2_uf": stmt.excluded.avg_price_m2_uf,
+            "median_price_m2_uf": stmt.excluded.median_price_m2_uf,
+            "min_price_m2_uf": stmt.excluded.min_price_m2_uf,
+            "max_price_m2_uf": stmt.excluded.max_price_m2_uf,
+            "std_deviation": stmt.excluded.std_deviation,
+            "sample_count": stmt.excluded.sample_count,
+            "last_updated": now,
+        },
+    )
+    await session.execute(stmt)
 
 
 async def get_zone_average(

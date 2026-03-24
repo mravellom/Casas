@@ -10,6 +10,8 @@ export interface PropertyListItem {
   bathrooms: number | null;
   commune: string;
   address: string | null;
+  latitude: number | null;
+  longitude: number | null;
   is_opportunity: boolean;
   opportunity_score: number | null;
   first_seen_at: string | null;

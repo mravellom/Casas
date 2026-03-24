@@ -1,12 +1,20 @@
+import logging
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
-    # Base de datos
-    database_url: str = "postgresql+asyncpg://inmoalert:inmoalert_pass@db:5432/inmoalert"
+    # Entorno
+    environment: str = "development"
+
+    # Base de datos (sin default inseguro)
+    database_url: str = "postgresql+asyncpg://inmoalert:inmoalert_pass@localhost:5435/inmoalert"
 
     # Redis
-    redis_url: str = "redis://redis:6379/0"
+    redis_url: str = "redis://localhost:6382/0"
 
     # Telegram
     telegram_bot_token: str = ""
@@ -19,6 +27,7 @@ class Settings(BaseSettings):
     scraping_interval_hours: int = 4
     scraping_delay_min: int = 3
     scraping_delay_max: int = 8
+    scraping_max_requests_per_session: int = 100
 
     # Oportunidades
     opportunity_min_score: int = 70
@@ -41,7 +50,22 @@ class Settings(BaseSettings):
     min_bedrooms: int = 1
     max_bedrooms: int = 2
 
+    # Security
+    admin_api_key: str = ""
+    cors_origins: list[str] = ["http://localhost:3000"]
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    @model_validator(mode="after")
+    def validate_production(self):
+        if self.environment == "production":
+            if not self.telegram_bot_token:
+                raise ValueError("TELEGRAM_BOT_TOKEN requerido en producción")
+            if not self.admin_api_key:
+                raise ValueError("ADMIN_API_KEY requerido en producción")
+            if "inmoalert_pass" in self.database_url:
+                raise ValueError("Credenciales por defecto detectadas en producción")
+        return self
 
 
 settings = Settings()

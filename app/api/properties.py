@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,7 @@ async def list_properties(
     max_uf: float | None = Query(None, ge=0),
     bedrooms: int | None = Query(None, ge=1, le=5),
     only_opportunities: bool = False,
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=500),
     limit: int = Query(20, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
 ):
@@ -61,6 +61,8 @@ async def list_properties(
                 "bathrooms": p.bathrooms,
                 "commune": p.commune,
                 "address": p.address,
+                "latitude": float(p.latitude) if p.latitude else None,
+                "longitude": float(p.longitude) if p.longitude else None,
                 "is_opportunity": p.is_opportunity,
                 "opportunity_score": p.opportunity_score,
                 "first_seen_at": p.first_seen_at.isoformat() if p.first_seen_at else None,
@@ -80,7 +82,7 @@ async def get_property(
     prop = result.scalar_one_or_none()
 
     if not prop:
-        return {"error": "Propiedad no encontrada"}, 404
+        raise HTTPException(status_code=404, detail="Propiedad no encontrada")
 
     return {
         "id": str(prop.id),

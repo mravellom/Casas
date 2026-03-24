@@ -285,56 +285,75 @@ async def score_all_properties():
         }
 
         if not averages:
-            logger.warning("No hay promedios de mercado. Ejecuta pricing primero.")
+            missing = [c for c in settings.target_communes if not any(
+                k[0] == c for k in averages
+            )]
+            logger.warning(
+                f"No hay promedios de mercado. Comunas sin datos: {missing or 'todas'}"
+            )
             return 0, 0
 
-        # Obtener propiedades activas con precio y m²
-        stmt = select(Property).where(
-            Property.is_active == True,  # noqa: E712
-            Property.price_m2_uf.isnot(None),
-            Property.price_m2_uf > 0,
-        )
-        result = await session.execute(stmt)
-        properties = list(result.scalars().all())
+        # Batch processing para evitar OOM con datasets grandes
+        BATCH_SIZE = 500
+        offset = 0
+        skipped_no_avg = 0
 
-        for prop in properties:
-            key = (prop.commune, prop.bedrooms)
-            market_avg = averages.get(key)
-            if not market_avg:
-                continue
-
-            avg_m2 = float(market_avg.avg_price_m2_uf)
-            median_m2 = (
-                float(market_avg.median_price_m2_uf)
-                if market_avg.median_price_m2_uf
-                else None
+        while True:
+            stmt = (
+                select(Property)
+                .where(
+                    Property.is_active.is_(True),
+                    Property.price_m2_uf.isnot(None),
+                    Property.price_m2_uf > 0,
+                )
+                .offset(offset)
+                .limit(BATCH_SIZE)
             )
+            result = await session.execute(stmt)
+            properties = list(result.scalars().all())
 
-            # Detectar keywords
-            keywords = detect_urgency_keywords(prop.title, prop.description)
-            prop.has_urgency_keyword = len(keywords) > 0
+            if not properties:
+                break
 
-            # Calcular score
-            score = calculate_score(prop, avg_m2, median_m2)
-            prop.opportunity_score = score
+            for prop in properties:
+                key = (prop.commune, prop.bedrooms)
+                market_avg = averages.get(key)
+                if not market_avg:
+                    skipped_no_avg += 1
+                    continue
 
-            # Calcular desviación
-            deviation_pct = (
-                (float(prop.price_m2_uf) - avg_m2) / avg_m2
-            ) * 100
+                avg_m2 = float(market_avg.avg_price_m2_uf)
+                median_m2 = (
+                    float(market_avg.median_price_m2_uf)
+                    if market_avg.median_price_m2_uf
+                    else None
+                )
 
-            # Marcar como oportunidad
-            is_opp = (
-                deviation_pct <= settings.price_deviation_threshold
-                or (prop.has_urgency_keyword and deviation_pct <= -10)
-            )
-            prop.is_opportunity = is_opp
+                keywords = detect_urgency_keywords(prop.title, prop.description)
+                prop.has_urgency_keyword = len(keywords) > 0
 
-            scored += 1
-            if is_opp:
-                opportunities += 1
+                score = calculate_score(prop, avg_m2, median_m2)
+                prop.opportunity_score = score
 
-        await session.commit()
+                deviation_pct = (
+                    (float(prop.price_m2_uf) - avg_m2) / avg_m2
+                ) * 100
+
+                is_opp = (
+                    deviation_pct <= settings.price_deviation_threshold
+                    or (prop.has_urgency_keyword and deviation_pct <= -10)
+                )
+                prop.is_opportunity = is_opp
+
+                scored += 1
+                if is_opp:
+                    opportunities += 1
+
+            await session.commit()
+            offset += BATCH_SIZE
+
+        if skipped_no_avg > 0:
+            logger.warning(f"Propiedades sin promedio de zona: {skipped_no_avg}")
 
     logger.info(
         f"Scoring completado: {scored} propiedades analizadas, "

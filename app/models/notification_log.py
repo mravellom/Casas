@@ -29,6 +29,7 @@ class NotificationLog(Base):
 
     __table_args__ = (
         Index("idx_notif_user_prop", "user_id", "property_id", unique=True),
+        Index("idx_notif_user_sent", "user_id", "sent_at"),
     )
 
     def __repr__(self) -> str:
