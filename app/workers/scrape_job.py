@@ -2,8 +2,10 @@ import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
 
+from app.analysis.filters import deduplicate_properties
+from app.analysis.pricing import update_market_averages
+from app.analysis.scoring import score_all_properties
 from app.analysis.uf_converter import clp_to_uf, get_uf_value
 from app.config import settings
 from app.database import async_session
@@ -15,9 +17,42 @@ from app.scrapers.yapo import YapoScraper
 logger = logging.getLogger(__name__)
 
 
+async def run_full_pipeline():
+    """Ejecuta el pipeline completo: scraping → limpieza → pricing → scoring."""
+    logger.info("========== PIPELINE COMPLETO INICIADO ==========")
+
+    # Paso 1: Scraping
+    await run_scraping()
+
+    # Paso 2: Deduplicación
+    try:
+        dedup_count = await deduplicate_properties()
+        logger.info(f"Paso 2 - Deduplicación: {dedup_count} duplicados eliminados")
+    except Exception as e:
+        logger.error(f"Error en deduplicación: {e}")
+
+    # Paso 3: Recalcular promedios de mercado
+    try:
+        zones_updated = await update_market_averages()
+        logger.info(f"Paso 3 - Promedios: {zones_updated} zonas actualizadas")
+    except Exception as e:
+        logger.error(f"Error en promedios de mercado: {e}")
+
+    # Paso 4: Scoring de oportunidades
+    try:
+        scored, opportunities = await score_all_properties()
+        logger.info(
+            f"Paso 4 - Scoring: {scored} analizadas, {opportunities} oportunidades"
+        )
+    except Exception as e:
+        logger.error(f"Error en scoring: {e}")
+
+    logger.info("========== PIPELINE COMPLETO FINALIZADO ==========")
+
+
 async def run_scraping():
     """Ejecuta el scraping de todos los portales y guarda en BD."""
-    logger.info("=== Iniciando job de scraping ===")
+    logger.info("=== Paso 1: Scraping ===")
 
     # Obtener valor UF del día
     try:
@@ -57,7 +92,7 @@ async def run_scraping():
 
     # Guardar en BD
     saved, updated = await _save_properties(filtered)
-    logger.info(f"=== Scraping completado: {saved} nuevas, {updated} actualizadas ===")
+    logger.info(f"Scraping completado: {saved} nuevas, {updated} actualizadas")
 
 
 def _filter_and_convert(

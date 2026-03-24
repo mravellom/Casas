@@ -4,14 +4,14 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks
 
-from app.workers.scrape_job import run_scraping
+from app.workers.scrape_job import run_full_pipeline
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 logger = logging.getLogger(__name__)
 
-# Estado del último scraping
-_scrape_status = {
+# Estado del último pipeline
+_pipeline_status = {
     "running": False,
     "last_run": None,
     "last_error": None,
@@ -28,27 +28,28 @@ async def health_check():
 
 
 @router.post("/scrape/trigger")
-async def trigger_scrape(background_tasks: BackgroundTasks):
-    if _scrape_status["running"]:
-        return {"status": "already_running", "message": "Scraping ya está en ejecución"}
+async def trigger_pipeline(background_tasks: BackgroundTasks):
+    """Dispara el pipeline completo: scraping → dedup → pricing → scoring."""
+    if _pipeline_status["running"]:
+        return {"status": "already_running", "message": "Pipeline ya está en ejecución"}
 
-    background_tasks.add_task(_run_scrape_with_status)
-    return {"status": "started", "message": "Scraping iniciado en background"}
+    background_tasks.add_task(_run_pipeline_with_status)
+    return {"status": "started", "message": "Pipeline completo iniciado en background"}
 
 
 @router.get("/scrape/status")
-async def scrape_status():
-    return _scrape_status
+async def pipeline_status():
+    return _pipeline_status
 
 
-async def _run_scrape_with_status():
-    _scrape_status["running"] = True
-    _scrape_status["last_error"] = None
+async def _run_pipeline_with_status():
+    _pipeline_status["running"] = True
+    _pipeline_status["last_error"] = None
     try:
-        await run_scraping()
-        _scrape_status["last_run"] = datetime.now(timezone.utc).isoformat()
+        await run_full_pipeline()
+        _pipeline_status["last_run"] = datetime.now(timezone.utc).isoformat()
     except Exception as e:
-        logger.error(f"Error en scraping: {e}")
-        _scrape_status["last_error"] = str(e)
+        logger.error(f"Error en pipeline: {e}")
+        _pipeline_status["last_error"] = str(e)
     finally:
-        _scrape_status["running"] = False
+        _pipeline_status["running"] = False
