@@ -1,9 +1,8 @@
 import logging
+import time
 from datetime import datetime, timezone
 
 from sqlalchemy import select
-
-from sqlalchemy import select as sa_select
 
 from app.analysis.filters import deduplicate_properties
 from app.analysis.pricing import update_market_averages
@@ -16,16 +15,31 @@ from app.notifications.telegram import send_opportunity_alerts
 from app.scrapers.base import ScrapedProperty
 from app.scrapers.portal_inmobiliario import PortalInmobiliarioScraper
 from app.scrapers.yapo import YapoScraper
+from app.workers.monitor import (
+    notify_admin,
+    notify_no_properties,
+    notify_pipeline_success,
+    notify_scraping_error,
+    record_pipeline_run,
+)
 
 logger = logging.getLogger(__name__)
 
 
 async def run_full_pipeline():
-    """Ejecuta el pipeline completo: scraping → limpieza → pricing → scoring."""
+    """Ejecuta el pipeline completo: scraping → limpieza → pricing → scoring → alertas."""
     logger.info("========== PIPELINE COMPLETO INICIADO ==========")
+    start_time = time.time()
+    errors: list[str] = []
+    properties_count = 0
+    opportunities_count = 0
+    alerts_count = 0
 
     # Paso 1: Scraping
-    await run_scraping()
+    properties_count = await run_scraping()
+
+    if properties_count == 0:
+        await notify_no_properties()
 
     # Paso 2: Deduplicación
     try:
@@ -33,6 +47,7 @@ async def run_full_pipeline():
         logger.info(f"Paso 2 - Deduplicación: {dedup_count} duplicados eliminados")
     except Exception as e:
         logger.error(f"Error en deduplicación: {e}")
+        errors.append(f"Dedup: {e}")
 
     # Paso 3: Recalcular promedios de mercado
     try:
@@ -40,21 +55,23 @@ async def run_full_pipeline():
         logger.info(f"Paso 3 - Promedios: {zones_updated} zonas actualizadas")
     except Exception as e:
         logger.error(f"Error en promedios de mercado: {e}")
+        errors.append(f"Pricing: {e}")
 
     # Paso 4: Scoring de oportunidades
     try:
-        scored, opportunities = await score_all_properties()
+        scored, opportunities_count = await score_all_properties()
         logger.info(
-            f"Paso 4 - Scoring: {scored} analizadas, {opportunities} oportunidades"
+            f"Paso 4 - Scoring: {scored} analizadas, {opportunities_count} oportunidades"
         )
     except Exception as e:
         logger.error(f"Error en scoring: {e}")
+        errors.append(f"Scoring: {e}")
 
     # Paso 5: Enviar alertas por Telegram
     try:
         async with async_session() as session:
             stmt = (
-                sa_select(Property)
+                select(Property)
                 .where(
                     Property.is_opportunity == True,  # noqa: E712
                     Property.is_active == True,  # noqa: E712
@@ -66,18 +83,55 @@ async def run_full_pipeline():
             new_opportunities = list(result.scalars().all())
 
         if new_opportunities:
-            sent = await send_opportunity_alerts(new_opportunities)
-            logger.info(f"Paso 5 - Alertas: {sent} notificaciones enviadas")
+            alerts_count = await send_opportunity_alerts(new_opportunities)
+            logger.info(f"Paso 5 - Alertas: {alerts_count} notificaciones enviadas")
         else:
             logger.info("Paso 5 - Alertas: sin oportunidades para notificar")
     except Exception as e:
         logger.error(f"Error en alertas: {e}")
+        errors.append(f"Alertas: {e}")
 
-    logger.info("========== PIPELINE COMPLETO FINALIZADO ==========")
+    # Paso 6: Limpiar propiedades inactivas
+    try:
+        from app.workers.cleanup import mark_stale_properties
+        stale = await mark_stale_properties()
+        logger.info(f"Paso 6 - Limpieza: {stale} propiedades marcadas como inactivas")
+    except Exception as e:
+        logger.error(f"Error en limpieza: {e}")
+        errors.append(f"Limpieza: {e}")
+
+    duration = time.time() - start_time
+    status = "success" if not errors else "partial_error"
+
+    # Registrar ejecución
+    record_pipeline_run(
+        status=status,
+        properties_found=properties_count,
+        opportunities_found=opportunities_count,
+        alerts_sent=alerts_count,
+        errors=errors,
+        duration_seconds=duration,
+    )
+
+    # Notificar al admin
+    if errors:
+        await notify_admin(
+            f"Pipeline completado con errores ({duration:.0f}s):\n"
+            + "\n".join(f"- {e}" for e in errors)
+        )
+    else:
+        await notify_pipeline_success(
+            properties_count, opportunities_count, alerts_count, duration
+        )
+
+    logger.info(f"========== PIPELINE FINALIZADO ({duration:.1f}s) ==========")
 
 
-async def run_scraping():
-    """Ejecuta el scraping de todos los portales y guarda en BD."""
+async def run_scraping() -> int:
+    """Ejecuta el scraping de todos los portales y guarda en BD.
+
+    Retorna la cantidad de propiedades guardadas.
+    """
     logger.info("=== Paso 1: Scraping ===")
 
     # Obtener valor UF del día
@@ -86,7 +140,8 @@ async def run_scraping():
         logger.info(f"Valor UF del día: ${uf_value:,.2f} CLP")
     except ValueError:
         logger.error("No se pudo obtener el valor UF. Abortando scraping.")
-        return
+        await notify_admin("ERROR CRÍTICO: No se pudo obtener el valor UF")
+        return 0
 
     all_properties: list[ScrapedProperty] = []
 
@@ -98,6 +153,7 @@ async def run_scraping():
         logger.info(f"Portal Inmobiliario: {len(pi_props)} propiedades")
     except Exception as e:
         logger.error(f"Error en scraping Portal Inmobiliario: {e}")
+        await notify_scraping_error("Portal Inmobiliario", str(e))
 
     # Scrape Yapo
     try:
@@ -107,10 +163,11 @@ async def run_scraping():
         logger.info(f"Yapo: {len(yapo_props)} propiedades")
     except Exception as e:
         logger.error(f"Error en scraping Yapo: {e}")
+        await notify_scraping_error("Yapo", str(e))
 
     if not all_properties:
         logger.warning("No se encontraron propiedades en ningún portal")
-        return
+        return 0
 
     # Filtrar por rango de precio y convertir CLP a UF
     filtered = _filter_and_convert(all_properties, uf_value)
@@ -119,6 +176,8 @@ async def run_scraping():
     # Guardar en BD
     saved, updated = await _save_properties(filtered)
     logger.info(f"Scraping completado: {saved} nuevas, {updated} actualizadas")
+
+    return saved + updated
 
 
 def _filter_and_convert(

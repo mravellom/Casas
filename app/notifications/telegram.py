@@ -17,6 +17,7 @@ from telegram.ext import (
 from app.config import settings
 from app.database import async_session
 from app.models.alert import Alert
+from app.models.feedback import Feedback
 from app.models.market_average import MarketAverage
 from app.models.notification_log import NotificationLog
 from app.models.property import Property
@@ -103,6 +104,7 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/top - Top 5 oportunidades del día\n"
         "/mercado - Promedios UF/m² por comuna\n"
         "/mi_config - Ver tu configuración actual\n"
+        "/feedback - Evaluar oportunidades recibidas\n"
         "/stop - Pausar notificaciones\n"
         "/ayuda - Este mensaje\n"
     )
@@ -648,6 +650,105 @@ async def _send_telegram_message(bot: Bot, chat_id: str, text: str) -> bool:
 
 
 # ===========================================================================
+# FEEDBACK DE USUARIOS
+# ===========================================================================
+
+
+async def cmd_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra las últimas oportunidades notificadas para dar feedback."""
+    chat_id = str(update.effective_chat.id)
+
+    async with async_session() as session:
+        user = await _get_user(session, chat_id)
+        if not user:
+            await update.message.reply_text("No estás registrado. Usa /start primero.")
+            return
+
+        # Últimas 5 propiedades notificadas al usuario
+        stmt = (
+            select(NotificationLog, Property)
+            .join(Property, NotificationLog.property_id == Property.id)
+            .where(NotificationLog.user_id == user.id)
+            .order_by(NotificationLog.sent_at.desc())
+            .limit(5)
+        )
+        result = await session.execute(stmt)
+        rows = list(result.all())
+
+    if not rows:
+        await update.message.reply_text(
+            "Aún no has recibido alertas para evaluar."
+        )
+        return
+
+    keyboard = []
+    for notif, prop in rows:
+        price = f"{float(prop.price_uf):,.0f}UF" if prop.price_uf else "?"
+        label = f"{prop.commune} | {price} | Score:{prop.opportunity_score}"
+        keyboard.append([
+            InlineKeyboardButton(
+                f"Buena: {label}", callback_data=f"fb:good:{prop.id}"
+            ),
+        ])
+        keyboard.append([
+            InlineKeyboardButton(
+                f"Mala: {label}", callback_data=f"fb:bad:{prop.id}"
+            ),
+        ])
+
+    await update.message.reply_text(
+        "Evalúa las últimas oportunidades que recibiste.\n"
+        "Tu feedback nos ayuda a mejorar la detección:\n",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def callback_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Procesa el feedback del usuario sobre una oportunidad."""
+    query = update.callback_query
+    await query.answer()
+
+    chat_id = str(query.message.chat_id)
+    parts = query.data.split(":")
+    if len(parts) != 3:
+        return
+
+    _, quality, property_id = parts
+    is_good = quality == "good"
+
+    async with async_session() as session:
+        user = await _get_user(session, chat_id)
+        if not user:
+            return
+
+        # Verificar si ya dio feedback para esta propiedad
+        stmt = select(Feedback).where(
+            Feedback.user_id == user.id,
+            Feedback.property_id == property_id,
+        )
+        result = await session.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            existing.is_good = is_good
+        else:
+            fb = Feedback(
+                user_id=user.id,
+                property_id=property_id,
+                is_good=is_good,
+            )
+            session.add(fb)
+
+        await session.commit()
+
+    label = "BUENA" if is_good else "MALA"
+    await query.edit_message_text(
+        f"Feedback registrado: oportunidad marcada como {label}.\n"
+        "Gracias, esto nos ayuda a mejorar."
+    )
+
+
+# ===========================================================================
 # HELPERS
 # ===========================================================================
 
@@ -697,8 +798,12 @@ def build_telegram_app() -> Application | None:
     app.add_handler(CommandHandler("top", cmd_top))
     app.add_handler(CommandHandler("mercado", cmd_mercado))
 
-    # Callback para botones inline de comunas
+    # Feedback
+    app.add_handler(CommandHandler("feedback", cmd_feedback))
+
+    # Callbacks para botones inline
     app.add_handler(CallbackQueryHandler(callback_commune, pattern=r"^commune:"))
+    app.add_handler(CallbackQueryHandler(callback_feedback, pattern=r"^fb:"))
 
     # Conversación para precio (requiere múltiples pasos)
     precio_handler = ConversationHandler(
