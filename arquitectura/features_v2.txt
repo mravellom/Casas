@@ -1,0 +1,333 @@
+================================================================================
+  INMOALERT CHILE — FEATURES V2 (PLAN DE INTEGRACIÓN)
+  Fecha: 2026-03-25
+================================================================================
+
+Se proponen 4 módulos nuevos. A continuación el plan de integración
+para cada uno, con archivos a crear/modificar, modelo de datos,
+y orden de implementación.
+
+
+================================================================================
+1. CALCULADOR DE RENTABILIDAD REAL (Capa Financiera)
+================================================================================
+
+CONCEPTO:
+  El inversionista no compra m², compra flujo de caja. Agregar
+  proyección financiera al detalle de cada propiedad.
+
+DATOS NECESARIOS:
+  - Arriendo promedio por comuna/dormitorios (nuevo scraping semanal)
+  - Precio de compra (ya existe: price_uf)
+  - Gastos comunes estimados por m² (dato configurable)
+
+MÉTRICAS A CALCULAR:
+  - Arriendo estimado mensual (UF)
+  - Cap Rate = (Arriendo Anual / Precio Compra) × 100
+  - Payback Period = Precio Compra / Arriendo Anual (en años)
+  - ROI anual neto (descontando gastos comunes)
+  - Badge "Alta Rentabilidad" si Cap Rate > 6%
+
+ARCHIVOS A CREAR:
+  app/analysis/rentability.py
+    - calculate_cap_rate(price_uf, monthly_rent_uf) -> float
+    - calculate_payback(price_uf, monthly_rent_uf) -> float
+    - calculate_roi(price_uf, monthly_rent_uf, expenses_uf) -> float
+    - get_estimated_rent(commune, bedrooms) -> float
+    - is_high_rentability(cap_rate) -> bool (> 6%)
+
+  app/models/rent_average.py
+    - Tabla: rent_averages
+    - Campos: commune, bedrooms, avg_rent_uf, median_rent_uf,
+              sample_count, last_updated
+
+  app/scrapers/rent_scraper.py
+    - Scrapea arriendos de Portal Inmobiliario (misma estructura)
+    - URL: /arriendo/departamento/{dorms}/{comuna}-metropolitana
+    - Frecuencia: 1 vez por semana (job separado)
+
+ARCHIVOS A MODIFICAR:
+  app/api/properties.py
+    - Agregar campos al GET /{id}:
+      estimated_rent_uf, cap_rate, payback_years, roi_annual, is_high_rent
+
+  app/api/opportunities.py
+    - Agregar cap_rate y payback al listado de oportunidades
+
+  app/workers/scrape_job.py
+    - Nuevo paso en pipeline: calcular rentabilidad después de scoring
+
+  app/config.py
+    - Nuevas settings: monthly_expenses_per_m2_uf (default: 0.08)
+    - rent_scraping_interval_days (default: 7)
+
+  frontend/src/app/(public)/oportunidades/[id]/page.tsx
+    - Sección "Proyección de Inversión" con:
+      - Arriendo estimado
+      - Cap Rate con gauge visual
+      - Payback en años
+      - Badge "Alta Rentabilidad" si > 6%
+
+  frontend/src/components/opportunities/OpportunityCard.tsx
+    - Agregar cap_rate al card si está disponible
+
+  frontend/src/lib/types.ts
+    - Agregar interfaces RentAverage, RentabilityData
+
+MODELO DE DATOS:
+  rent_averages
+  ┌─────────────┬──────────┬───────────────────────────┐
+  │ Campo       │ Tipo     │ Descripción               │
+  ├─────────────┼──────────┼───────────────────────────┤
+  │ id          │ UUID PK  │                           │
+  │ commune     │ VARCHAR  │ Comuna                    │
+  │ bedrooms    │ SMALLINT │ Dormitorios               │
+  │ avg_rent_uf │ DECIMAL  │ Arriendo promedio UF/mes  │
+  │ median_rent │ DECIMAL  │ Mediana arriendo UF/mes   │
+  │ min_rent_uf │ DECIMAL  │ Mínimo                    │
+  │ max_rent_uf │ DECIMAL  │ Máximo                    │
+  │ sample_count│ INTEGER  │ Muestra                   │
+  │ last_updated│ TIMESTAMP│                           │
+  └─────────────┴──────────┴───────────────────────────┘
+  Unique: (commune, bedrooms)
+
+EJEMPLO DE CÁLCULO:
+  Depto: 2,350 UF, Ñuñoa, 1D
+  Arriendo promedio zona: 12 UF/mes
+  Arriendo anual: 144 UF
+  Cap Rate: 144 / 2,350 = 6.13% → "Alta Rentabilidad"
+  Payback: 2,350 / 144 = 16.3 años
+  Gastos comunes: 0.08 UF/m² × 45m² = 3.6 UF/mes
+  ROI neto: ((144 - 43.2) / 2,350) × 100 = 4.29%
+
+
+================================================================================
+2. INTELIGENCIA DE BARRIO (Data Geoespacial)
+================================================================================
+
+CONCEPTO:
+  El valor está en lo que rodea al edificio, no solo en el depto.
+  Usar APIs gratuitas para enriquecer cada propiedad con contexto.
+
+DATOS A INTEGRAR:
+  - Distancia al Metro más cercano (Overpass API / OpenStreetMap)
+  - Servicios cercanos: supermercados, farmacias, parques (radio 500m)
+  - Futuras estaciones de Metro (Líneas 7, 8, 9 — dato estático)
+
+ARCHIVOS A CREAR:
+  app/analysis/neighborhood.py
+    - get_nearest_metro(lat, lng) -> dict {name, distance_m, walk_min}
+    - get_nearby_services(lat, lng, radius_m=500) -> dict {supermarkets, pharmacies, parks}
+    - get_connectivity_score(lat, lng) -> int (0-100)
+    - check_future_metro(lat, lng) -> dict | None {line, station, distance_m}
+    - Usa Overpass API (gratuita, sin key): https://overpass-api.de/api/interpreter
+
+  app/analysis/future_metro.py
+    - FUTURE_STATIONS: lista estática con coordenadas de estaciones
+      de Líneas 7, 8, 9 (dato público del gobierno de Chile)
+    - is_near_future_station(lat, lng, max_distance_m=800) -> dict | None
+
+  app/models/neighborhood_data.py
+    - Tabla: neighborhood_data (cache de datos geoespaciales)
+    - Campos: property_id FK, nearest_metro_name, nearest_metro_m,
+              walk_to_metro_min, supermarkets_500m, pharmacies_500m,
+              parks_500m, connectivity_score, future_metro_line,
+              future_metro_station, future_metro_distance_m
+
+ARCHIVOS A MODIFICAR:
+  app/api/properties.py
+    - GET /{id}: agregar sección neighborhood con todos los datos
+
+  app/workers/scrape_job.py
+    - Nuevo paso (opcional, puede ser lazy): enriquecer propiedades
+      nuevas con datos de barrio
+
+  frontend/src/app/(public)/oportunidades/[id]/page.tsx
+    - Sección "Inteligencia de Barrio":
+      - Distancia al Metro con ícono de tren
+      - Lista de servicios cercanos
+      - Badge "Compra Maestra" si está cerca de futuro Metro
+
+  frontend/src/app/(public)/mapa/LeafletMap.tsx
+    - Capa opcional de futuras estaciones de Metro (marcadores especiales)
+    - Toggle en filtros: "Mostrar futuros Metros"
+
+OVERPASS API QUERY EJEMPLO:
+  Para metros cerca de un punto:
+  [out:json];
+  node["station"="subway"](around:1000,-33.4420,-70.6530);
+  out body;
+
+  Para supermercados en radio 500m:
+  [out:json];
+  node["shop"="supermarket"](around:500,-33.4420,-70.6530);
+  out count;
+
+BADGE "COMPRA MAESTRA":
+  Si la propiedad está a < 800m de una futura estación de Metro
+  Y tiene un Cap Rate > 5%
+  → Se marca como "Compra Maestra" (plusvalía proyectada + rentabilidad)
+
+
+================================================================================
+3. DOSSIER DE INVERSIÓN (Generador PDF)
+================================================================================
+
+CONCEPTO:
+  Un botón "Generar Informe" que crea un PDF profesional de una
+  página para compartir por WhatsApp/email.
+
+CONTENIDO DEL PDF:
+  - Logo InmoAlert Chile
+  - Foto principal de la propiedad
+  - Datos técnicos: precio, m², UF/m², comuna, dormitorios
+  - Gráfico comparativo: "Esta propiedad vs promedio del barrio"
+  - Score de oportunidad con badge visual
+  - Proyección financiera: Cap Rate, Payback, arriendo estimado
+  - Inteligencia de barrio: metro cercano, servicios
+  - QR code con link al anuncio original
+  - Fecha de generación y disclaimer
+
+ARCHIVOS A CREAR:
+  app/api/reports.py
+    - GET /api/v1/reports/property/{id}/pdf
+    - Genera PDF en memoria y retorna como response
+    - Content-Type: application/pdf
+
+  app/reports/pdf_generator.py
+    - generate_property_report(property_id) -> bytes
+    - Usa reportlab o weasyprint para generar el PDF
+    - Template con logo, gráficos, QR
+    - Dependencia: reportlab o weasyprint + qrcode
+
+  frontend/src/app/(public)/oportunidades/[id]/page.tsx
+    - Botón "Generar Informe PDF"
+    - Descarga directa del PDF
+
+DEPENDENCIAS NUEVAS:
+  reportlab==4.1.0  (generación PDF)
+  qrcode==7.4.2     (QR codes)
+  pillow==10.4.0     (procesamiento de imágenes)
+
+ESTRUCTURA DEL PDF:
+  ┌─────────────────────────────────────────────┐
+  │  [Logo InmoAlert]     Informe de Inversión  │
+  │                       Generado: 25/03/2026  │
+  ├─────────────────────────────────────────────┤
+  │  [Foto Principal]                           │
+  │                                             │
+  │  Depto 2D Santiago Centro                   │
+  │  San Antonio 456                            │
+  ├──────────────────┬──────────────────────────┤
+  │  Precio: 2,350UF │  Score: 87 (ORO)        │
+  │  45 m² | 1D 1B   │  -19% bajo mercado      │
+  │  52.2 UF/m²      │  Ganancia pot: 548 UF   │
+  ├──────────────────┴──────────────────────────┤
+  │  [Gráfico: Esta propiedad vs Promedio]      │
+  │  ████████████░░░░  52.2 UF/m² (tu precio)   │
+  │  ████████████████  64.4 UF/m² (promedio)     │
+  ├─────────────────────────────────────────────┤
+  │  Proyección Financiera                      │
+  │  Cap Rate: 6.1% | Payback: 16 años         │
+  │  Arriendo est: 12 UF/mes                    │
+  ├─────────────────────────────────────────────┤
+  │  Barrio: Metro U de Chile (350m)            │
+  │  3 supermercados | 2 farmacias | 1 parque   │
+  ├──────────────────┬──────────────────────────┤
+  │  [QR → anuncio]  │  inmoalert.cl            │
+  └──────────────────┴──────────────────────────┘
+
+
+================================================================================
+4. WHITELIST DE CORREDORES (Filtro de Calidad)
+================================================================================
+
+CONCEPTO:
+  Filtrar avisos falsos y premiar avisos de calidad usando
+  feedback de usuarios y detección automática.
+
+FUNCIONALIDADES:
+  a) Detección "Dueño Directo" (automática)
+  b) Reputación del vendedor (basada en feedback)
+  c) Detección de "Aviso Gancho" (auto-ocultamiento)
+
+ARCHIVOS A CREAR:
+  app/analysis/listing_quality.py
+    - detect_direct_owner(title, description) -> bool
+      Keywords: "dueño vende", "sin comisión", "sin corredor",
+      "directo", "propietario"
+    - detect_suspicious(title, description) -> list[str]
+      Keywords: precio irrealmente bajo, sin fotos, texto genérico
+
+  app/models/seller_reputation.py
+    - Tabla: seller_reputation
+    - Campos: seller_name, source, total_listings, positive_feedback,
+              negative_feedback, reputation_score, is_blacklisted
+
+ARCHIVOS A MODIFICAR:
+  app/models/property.py
+    - Nuevos campos:
+      is_direct_owner: bool (dueño vende directamente)
+      is_suspicious: bool (posible aviso gancho)
+      seller_name: str | None
+
+  app/models/feedback.py
+    - Nuevo campo: reason VARCHAR (falso, no_disponible, real, excelente)
+
+  app/analysis/scoring.py
+    - Factor adicional: +10 puntos si es dueño directo
+    - -20 puntos si es sospechoso
+
+  app/notifications/telegram.py
+    - cmd_feedback: agregar opciones "Ya no disponible" y "Aviso falso"
+    - Lógica: si 3 feedbacks negativos en < 1 hora → ocultar automáticamente
+
+  app/api/properties.py
+    - Filtro: ?direct_owner=true
+    - Mostrar badge "Dueño Directo" o "Corredor"
+
+  frontend/src/app/(public)/oportunidades/page.tsx
+    - Filtro "Solo dueño directo"
+    - Badge visual en cards
+
+  frontend/src/app/(public)/oportunidades/[id]/page.tsx
+    - Sección "Calidad del Aviso":
+      - Badge dueño directo / corredor
+      - Reputación del vendedor
+      - Warning si es sospechoso
+
+LÓGICA DE AUTO-OCULTAMIENTO:
+  IF (feedback.reason == "falso" OR "no_disponible")
+     AND count >= 3
+     AND time_window < 1 hora
+  THEN:
+     property.is_active = False
+     property.is_suspicious = True
+     notify_admin("Aviso gancho detectado: {property.title}")
+
+
+================================================================================
+ORDEN DE IMPLEMENTACIÓN RECOMENDADO
+================================================================================
+
+FASE 1: Calculador de Rentabilidad (1 semana)
+  - Mayor impacto para inversionistas
+  - Solo requiere scraping de arriendos (misma fuente)
+  - Cálculos simples (Cap Rate, Payback)
+
+FASE 2: Whitelist de Corredores (3-4 días)
+  - Mejora calidad de datos inmediatamente
+  - Detección de dueño directo es simple (keywords)
+  - Auto-ocultamiento reduce falsos positivos
+
+FASE 3: Inteligencia de Barrio (1 semana)
+  - API Overpass es gratuita pero tiene rate limits
+  - Futuras estaciones de Metro es dato estático (rápido)
+  - Connectivity score agrega valor al mapa
+
+FASE 4: Dossier PDF (3-4 días)
+  - Depende de Fases 1 y 3 (incluye rentabilidad y barrio)
+  - Reportlab es straightforward
+  - Alto impacto en viralidad (compartir por WhatsApp)
+
+TIMELINE TOTAL: 3-4 semanas

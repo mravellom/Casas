@@ -6,7 +6,7 @@ import { useMarketAverages } from "@/lib/hooks/useOpportunities";
 import { ScoreBadge } from "@/components/opportunities/ScoreBadge";
 import { formatUFShort, formatM2, formatDate } from "@/lib/utils";
 import { SOURCE_LABELS } from "@/lib/constants";
-import { MapPin, Bed, Bath, Building2, Car, Package, ExternalLink, ArrowLeft } from "lucide-react";
+import { MapPin, Bed, Bath, Building2, Car, Package, ExternalLink, ArrowLeft, FileDown } from "lucide-react";
 import Link from "next/link";
 
 export default function PropertyDetailPage() {
@@ -121,6 +121,131 @@ export default function PropertyDetailPage() {
           )}
         </div>
 
+        {/* Rentability */}
+        {prop.rentability && (
+          <div className="p-6 border-b">
+            <div className="flex items-center gap-2 mb-4">
+              <h3 className="font-semibold">Proyección de Inversión</h3>
+              {prop.rentability.is_high_rentability && (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">
+                  Alta Rentabilidad
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="bg-gray-50 rounded-lg p-3 text-center">
+                <p className="text-xs text-gray-500 mb-1">Arriendo estimado</p>
+                <p className="text-lg font-bold text-gray-900">{prop.rentability.estimated_rent_uf} UF</p>
+                <p className="text-xs text-gray-400">/mes</p>
+              </div>
+              <div className={`rounded-lg p-3 text-center ${prop.rentability.cap_rate > 6 ? "bg-green-50" : "bg-gray-50"}`}>
+                <p className="text-xs text-gray-500 mb-1">Cap Rate</p>
+                <p className={`text-lg font-bold ${prop.rentability.cap_rate > 6 ? "text-green-600" : "text-gray-900"}`}>
+                  {prop.rentability.cap_rate}%
+                </p>
+                <p className="text-xs text-gray-400">bruto anual</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3 text-center">
+                <p className="text-xs text-gray-500 mb-1">Payback</p>
+                <p className="text-lg font-bold text-gray-900">{prop.rentability.payback_years}</p>
+                <p className="text-xs text-gray-400">años</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3 text-center">
+                <p className="text-xs text-gray-500 mb-1">Flujo mensual</p>
+                <p className={`text-lg font-bold ${prop.rentability.monthly_cashflow_uf > 0 ? "text-green-600" : "text-red-500"}`}>
+                  {prop.rentability.monthly_cashflow_uf > 0 ? "+" : ""}{prop.rentability.monthly_cashflow_uf} UF
+                </p>
+                <p className="text-xs text-gray-400">neto</p>
+              </div>
+            </div>
+            <div className="mt-3 text-xs text-gray-400">
+              ROI neto anual: {prop.rentability.roi_annual}% | Gastos comunes est: {prop.rentability.monthly_expenses_uf} UF/mes
+            </div>
+          </div>
+        )}
+
+        {/* Neighborhood */}
+        {prop.neighborhood && (
+          <div className="p-6 border-b">
+            <div className="flex items-center gap-2 mb-4">
+              <h3 className="font-semibold">Inteligencia de Barrio</h3>
+              {prop.neighborhood.is_master_buy && (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-700">
+                  Compra Maestra
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              {/* Metro actual */}
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-xs text-gray-500 mb-1">Metro más cercano</p>
+                {prop.neighborhood.nearest_metro ? (
+                  <>
+                    <p className="text-sm font-bold">{prop.neighborhood.nearest_metro.name}</p>
+                    <p className="text-xs text-gray-500">
+                      {prop.neighborhood.nearest_metro.distance_m}m ({prop.neighborhood.nearest_metro.walk_minutes} min caminando)
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-gray-400">No encontrado</p>
+                )}
+              </div>
+
+              {/* Servicios */}
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-xs text-gray-500 mb-1">Servicios (500m)</p>
+                <p className="text-sm">
+                  {prop.neighborhood.services_500m.supermarkets} supermercados
+                </p>
+                <p className="text-sm">
+                  {prop.neighborhood.services_500m.pharmacies} farmacias
+                </p>
+                <p className="text-sm">
+                  {prop.neighborhood.services_500m.parks} parques
+                </p>
+              </div>
+
+              {/* Futuro metro */}
+              <div className={`rounded-lg p-3 ${prop.neighborhood.future_metro ? "bg-purple-50" : "bg-gray-50"}`}>
+                <p className="text-xs text-gray-500 mb-1">Futuro Metro</p>
+                {prop.neighborhood.future_metro ? (
+                  <>
+                    <p className="text-sm font-bold text-purple-700">
+                      {prop.neighborhood.future_metro.line} - {prop.neighborhood.future_metro.name}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {prop.neighborhood.future_metro.distance_m}m ({prop.neighborhood.future_metro.walk_minutes} min)
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-gray-400">Sin estaciones cercanas</p>
+                )}
+              </div>
+            </div>
+
+            {/* Connectivity Score */}
+            <div className="mt-3 flex items-center gap-3">
+              <span className="text-xs text-gray-500">Conectividad:</span>
+              <div className="flex-1 h-2 bg-gray-200 rounded-full max-w-[200px]">
+                <div
+                  className="h-2 rounded-full bg-blue-500"
+                  style={{ width: `${prop.neighborhood.connectivity_score}%` }}
+                />
+              </div>
+              <span className="text-xs font-medium">{prop.neighborhood.connectivity_score}/100</span>
+            </div>
+          </div>
+        )}
+
+        {/* Direct Owner / Quality */}
+        {prop.is_direct_owner && (
+          <div className="px-6 py-3 border-b bg-green-50">
+            <span className="text-sm font-medium text-green-700">
+              Dueño Directo — Sin comisión de corredor
+            </span>
+          </div>
+        )}
+
         {/* Description */}
         {prop.description && (
           <div className="p-6 border-b">
@@ -135,14 +260,22 @@ export default function PropertyDetailPage() {
             <p>Detectado: {formatDate(prop.first_seen_at)}</p>
             <p>Última vez visto: {formatDate(prop.last_seen_at)}</p>
           </div>
-          <a
-            href={prop.source_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700 text-sm"
-          >
-            Ver anuncio original <ExternalLink className="h-4 w-4" />
-          </a>
+          <div className="flex gap-3">
+            <a
+              href={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/reports/property/${prop.id}/pdf`}
+              className="inline-flex items-center gap-2 border border-gray-300 text-gray-700 px-4 py-2.5 rounded-lg font-medium hover:bg-gray-50 text-sm"
+            >
+              <FileDown className="h-4 w-4" /> Descargar PDF
+            </a>
+            <a
+              href={prop.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700 text-sm"
+            >
+              Ver anuncio original <ExternalLink className="h-4 w-4" />
+            </a>
+          </div>
         </div>
       </div>
     </div>

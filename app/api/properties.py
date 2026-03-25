@@ -65,6 +65,7 @@ async def list_properties(
                 "longitude": float(p.longitude) if p.longitude else None,
                 "is_opportunity": p.is_opportunity,
                 "opportunity_score": p.opportunity_score,
+                "is_direct_owner": (p.raw_data or {}).get("is_direct_owner", False) if isinstance(p.raw_data, dict) else False,
                 "first_seen_at": p.first_seen_at.isoformat() if p.first_seen_at else None,
             }
             for p in properties
@@ -109,6 +110,9 @@ async def get_property(
         "opportunity_score": prop.opportunity_score,
         "has_urgency_keyword": prop.has_urgency_keyword,
         "is_active": prop.is_active,
+        "rentability": prop.raw_data.get("rentability") if isinstance(prop.raw_data, dict) else None,
+        "neighborhood": prop.raw_data.get("neighborhood") if isinstance(prop.raw_data, dict) else None,
+        "is_direct_owner": prop.raw_data.get("is_direct_owner", False) if isinstance(prop.raw_data, dict) else False,
         "first_seen_at": prop.first_seen_at.isoformat() if prop.first_seen_at else None,
         "last_seen_at": prop.last_seen_at.isoformat() if prop.last_seen_at else None,
         "images": prop.images,

@@ -41,6 +41,16 @@ async def run_full_pipeline():
     if properties_count == 0:
         await notify_no_properties()
 
+    # Paso 1b: Geocoding por comuna
+    try:
+        from app.analysis.geocoding import geocode_properties
+        geocoded = await geocode_properties()
+        if geocoded:
+            logger.info(f"Paso 1b - Geocoding: {geocoded} propiedades geolocalizadas")
+    except Exception as e:
+        logger.error(f"Error en geocoding: {e}")
+        errors.append(f"Geocoding: {e}")
+
     # Paso 2: Deduplicación
     try:
         dedup_count = await deduplicate_properties()
@@ -66,6 +76,36 @@ async def run_full_pipeline():
     except Exception as e:
         logger.error(f"Error en scoring: {e}")
         errors.append(f"Scoring: {e}")
+
+    # Paso 4b: Clasificar avisos (dueño directo, sospechosos)
+    try:
+        from app.analysis.listing_quality import classify_all_listings, auto_hide_bad_listings
+        direct_count = await classify_all_listings()
+        hidden = await auto_hide_bad_listings()
+        logger.info(f"Paso 4b - Calidad: {direct_count} dueño directo, {hidden} ocultos")
+    except Exception as e:
+        logger.error(f"Error en clasificación: {e}")
+        errors.append(f"Calidad: {e}")
+
+    # Paso 4c: Inteligencia de barrio (solo oportunidades, max 50)
+    try:
+        from app.analysis.neighborhood import enrich_all_properties
+        enriched = await enrich_all_properties(max_properties=30)
+        if enriched:
+            logger.info(f"Paso 4c - Barrio: {enriched} propiedades enriquecidas")
+    except Exception as e:
+        logger.error(f"Error en barrio: {e}")
+        errors.append(f"Barrio: {e}")
+
+    # Paso 4d: Calcular rentabilidad
+    try:
+        from app.analysis.rentability import calculate_all_rentabilities
+        rent_count = await calculate_all_rentabilities()
+        if rent_count:
+            logger.info(f"Paso 4b - Rentabilidad: {rent_count} propiedades")
+    except Exception as e:
+        logger.error(f"Error en rentabilidad: {e}")
+        errors.append(f"Rentabilidad: {e}")
 
     # Paso 5: Enviar alertas por Telegram
     try:

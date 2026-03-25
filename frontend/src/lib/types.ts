@@ -13,6 +13,7 @@ export interface PropertyListItem {
   latitude: number | null;
   longitude: number | null;
   is_opportunity: boolean;
+  is_direct_owner: boolean;
   opportunity_score: number | null;
   first_seen_at: string | null;
 }
@@ -28,9 +29,31 @@ export interface PropertyDetail extends PropertyListItem {
   has_bodega: boolean | null;
   has_urgency_keyword: boolean;
   is_active: boolean;
+  rentability: RentabilityData | null;
+  neighborhood: NeighborhoodData | null;
+  is_direct_owner: boolean;
   last_seen_at: string | null;
   images: string[] | null;
   source_id: string;
+}
+
+export interface RentabilityData {
+  estimated_rent_uf: number;
+  cap_rate: number;
+  cap_rate_net: number;
+  payback_years: number;
+  roi_annual: number;
+  monthly_expenses_uf: number;
+  monthly_cashflow_uf: number;
+  is_high_rentability: boolean;
+}
+
+export interface NeighborhoodData {
+  nearest_metro: { name: string; distance_m: number; walk_minutes: number } | null;
+  services_500m: { supermarkets: number; pharmacies: number; parks: number };
+  future_metro: { line: string; name: string; distance_m: number; walk_minutes: number } | null;
+  connectivity_score: number;
+  is_master_buy: boolean;
 }
 
 export interface OpportunityItem {

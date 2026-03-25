@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.health import router as health_router
 from app.api.opportunities import router as opportunities_router
 from app.api.properties import router as properties_router
+from app.api.reports import router as reports_router
 from app.config import settings
 from app.database import init_db
 from app.notifications.telegram import build_telegram_app
@@ -86,3 +87,4 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(properties_router)
 app.include_router(opportunities_router)
+app.include_router(reports_router)
