@@ -14,7 +14,7 @@ geoalchemy2==0.15.2
 playwright==1.49.1
 httpx==0.28.1
 beautifulsoup4==4.12.3
-selectolux==0.1.0
+selectolax==0.3.21
 
 # Análisis
 rapidfuzz==3.11.0
